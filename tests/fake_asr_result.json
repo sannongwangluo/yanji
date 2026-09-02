@@ -1,0 +1,19 @@
+{
+  "audio_info": {"duration": 72000},
+  "result": {
+    "text": "我是张三。大家好，我是李四。我是王五，负责运营。今天主要讨论下季度的推广预算怎么分。",
+    "utterances": [
+      {"speaker": "1", "text": "我是张三", "start_time": 0, "end_time": 1500, "definite": true},
+      {"speaker": "2", "text": "大家好，我是李四", "start_time": 2000, "end_time": 4200, "definite": true},
+      {"speaker": "3", "text": "我是王五，负责运营", "start_time": 4700, "end_time": 7600, "definite": true},
+      {"speaker": "1", "text": "今天主要讨论下季度的推广预算怎么分。", "start_time": 9000, "end_time": 15000, "definite": true},
+      {"speaker": "2", "text": "我建议线上投放占六成，剩下的四成给线下活动。", "start_time": 16000, "end_time": 24000, "definite": true},
+      {"speaker": "3", "text": "线上成本上季度涨了不少，六成可能不够，我建议提到七成。", "start_time": 25000, "end_time": 33000, "definite": true},
+      {"speaker": "1", "text": "那就定线上七成、线下三成，李四下周把投放计划细化一版。", "start_time": 34000, "end_time": 43000, "definite": true},
+      {"speaker": "2", "text": "好的，我下周三之前出第一版。", "start_time": 44000, "end_time": 50000, "definite": true},
+      {"speaker": "4", "text": "插一句，预算总额是不是还没最终批下来？", "start_time": 51000, "end_time": 57000, "definite": true},
+      {"speaker": "1", "text": "对，这是遗留问题，王五跟进财务确认一下，下周一给大家回复。", "start_time": 58000, "end_time": 65000, "definite": true},
+      {"speaker": "3", "text": "收到，我周一下午前回复。", "start_time": 66000, "end_time": 72000, "definite": true}
+    ]
+  }
+}

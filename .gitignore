@@ -1,0 +1,7 @@
+# 本地/运行时产物不入库；config.toml 含真实密钥，绝不提交
+.venv/
+__pycache__/
+输出/
+录音/
+日志/
+config.toml

@@ -1,0 +1,59 @@
+# 会议记录 —— 配置文件示例
+# 用法：复制本文件改名为 config.toml，把空字符串填上你的值。
+# 每一项都支持「留空 + 环境变量兜底」（见各节注释）；config.toml 里的值优先级最高。
+# 注意：config.toml 里有真实密钥，发给别人时只发这个示例文件，别发 config.toml。
+
+[volc]
+# 豆包语音识别 API Key（UUID 格式），火山新版豆包语音控制台签发。
+# 环境变量兜底：VOLC_API_KEY / VOLCENGINE_API_KEY
+api_key = ""
+# 资源 ID：豆包录音文件识别模型 2.0（标准版）。仅 --file-mode 备用路径用，一般不用改。
+resource_id = "volc.seedasr.auc"
+
+[streaming]
+# 长连接流式识别（默认主路径）：边录边出字。
+# 前提：控制台已开通「流式语音识别 2.0（时长版）」。
+url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+# 资源 ID：流式 2.0 小时版（含说话人分离）。一般不用改。
+resource_id = "volc.seedasr.sauc.duration"
+model_name = "bigmodel"
+ssd_version = "200"        # 说话人分离版本
+enable_nonstream = true    # 二遍识别：实时逐字 + nostream 复核（definite 分句才准）
+chunk_ms = 200             # 每包音频毫秒数
+reconnect_max = 5          # 断线自动重连最大次数（指数退避）
+
+[tos]
+# 火山对象存储 TOS —— 仅「--file-mode 备用路径」需要，默认流式识别用不到，可全部留空。
+# 环境变量兜底：VOLCENGINE_ACCESS_KEY_ID / VOLCENGINE_SECRET_ACCESS_KEY
+#               / VOLCENGINE_TOS_BUCKET / VOLCENGINE_TOS_REGION
+access_key_id = ""     # IAM 访问密钥 ID（AKLT 开头）
+secret_access_key = "" # IAM 访问密钥
+bucket = ""            # 存储桶名称
+region = "cn-beijing"  # 桶所在区域；服务器在境外请用 cn-hongkong 等海外节点
+endpoint = ""          # 留空则按 region 自动生成（tos-<region>.volces.com）
+
+[deepseek]
+# DeepSeek 用于生成会议纪要。环境变量兜底：DEEPSEEK_API_KEY
+api_key = ""
+model = "deepseek-v4-flash"
+endpoint = "https://api.deepseek.com/v1/chat/completions"
+
+[asr]
+language = "zh-CN"
+enable_speaker_info = true   # 说话人分离（开会多人，必须开）
+show_utterances = true       # 输出分句（报到映射依赖它）
+enable_punc = true           # 标点
+enable_itn = true            # 数字规范化
+enable_ddc = true            # 语义顺滑（去语气词）
+poll_interval_sec = 5        # 轮询间隔（秒）
+poll_timeout_sec = 1500      # 最长等 25 分钟（一小时会议识别通常 5~15 分钟）
+
+[app]
+# 纪要是否自动写入第二大脑（个人记忆库）。朋友试用请保持 false。
+ingest_brain_memory = false
+# 识别完成后是否自动从 TOS 删除音频。隐私建议保持 true。
+delete_audio_after_asr = true
+# 第二大脑目录（只有 ingest_brain_memory = true 时才用到）
+brain_memory_dir = "D:\\Github 资料\\5.0 类脑记忆"
+# 纪要 docx 输出目录：留空 = 程序目录下「输出」文件夹；GUI 里也可改（改动会写回这里）。
+output_dir = ""

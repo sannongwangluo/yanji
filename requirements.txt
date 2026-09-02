@@ -1,0 +1,6 @@
+# 会议记录工具依赖（Python 3.14，venv 内安装：pip install -r requirements.txt）
+sounddevice>=0.5.0
+numpy>=2.0
+requests>=2.31
+python-docx>=1.1
+websockets>=15.0    # 流式识别长连接（sync client，默认不读系统代理=直连）
