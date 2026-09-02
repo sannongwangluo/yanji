@@ -88,6 +88,10 @@
   DeepSeek 自动重试 / 输出目录配置与写回。改动后必跑 py_compile + 全量单测 +
   `--test-stream-wav` 真链 + mock 全链。
 
+- 版本控制：2026-09-02 已 git init 并首提交（main 分支）；config.toml、
+  录音/输出/日志产物、.venv 均由 .gitignore 排除，提交前 `git status` 确认
+  密钥文件未被追踪。
+
 ## GUI 线程模型（五线）
 
 1. tkinter 主线程只碰界面，`after(200)` 轮询 电平/转写/进度 三个队列；
