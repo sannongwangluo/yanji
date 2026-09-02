@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """输出目录配置单测：load_config 读 output_dir / pipeline._out_dir 回落 /
-save_output_dir 写回后可再读出（全部用临时目录，不碰真实 config.toml）。
+save_output_dir 写回后可再读出；另覆盖泛化 save_config_value（全部用临时目录，
+不碰真实 config.toml）。
 """
 import os
 import sys
@@ -9,7 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config_loader import load_config, save_output_dir
+from config_loader import load_config, save_config_value, save_output_dir
 from pipeline import _out_dir
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,6 +86,56 @@ class SaveOutputDirTest(unittest.TestCase):
             save_output_dir(r"C:\纪要's备份", config_path=cfg_path)
             self.assertEqual(load_config(cfg_path)["app"]["output_dir"],
                              r"C:\纪要's备份")
+
+
+class SaveConfigValueTest(unittest.TestCase):
+    """④ 泛化 save_config_value：任意节/键的单行写回（tmp 最小 config.toml）。"""
+
+    def _write(self, cfg_path, text):
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_replace_volc_api_key(self):
+        """① 在 [volc] 节替换已有 api_key 行，其他行/其他节不动。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[volc]\napi_key = \"old-uuid\"\n"
+                                  "resource_id = \"volc.seedasr.auc\"\n\n"
+                                  "[deepseek]\napi_key = \"sk-old\"\n")
+            save_config_value("volc", "api_key", "new-uuid-value", config_path=cfg_path)
+            cfg = load_config(cfg_path)
+            self.assertEqual(cfg["volc"]["api_key"], "new-uuid-value")
+            self.assertEqual(cfg["volc"]["resource_id"], "volc.seedasr.auc")
+            self.assertEqual(cfg["deepseek"]["api_key"], "sk-old")
+
+    def test_insert_key_into_existing_section(self):
+        """② 节存在但没有该 key → 插到节标题之后。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[deepseek]\nmodel = \"deepseek-v4-flash\"\n")
+            save_config_value("deepseek", "api_key", "sk-test-123", config_path=cfg_path)
+            cfg = load_config(cfg_path)
+            self.assertEqual(cfg["deepseek"]["api_key"], "sk-test-123")
+            self.assertEqual(cfg["deepseek"]["model"], "deepseek-v4-flash")
+
+    def test_append_section_when_missing(self):
+        """节都没有 → 文末追加节标题 + 该行，仍可读回。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[deepseek]\nmodel = \"x\"\n")
+            save_config_value("app", "output_dir", r"D:\新目录", config_path=cfg_path)
+            cfg = load_config(cfg_path)
+            self.assertEqual(cfg["app"]["output_dir"], r"D:\新目录")
+            self.assertEqual(cfg["deepseek"]["model"], "x")
+
+    def test_special_chars_roundtrip(self):
+        """③ 含引号/反斜杠的值 → basic string 写回，读回一致。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[volc]\napi_key = \"\"\n")
+            weird = "sk-'a\"b\\c'"
+            save_config_value("volc", "api_key", weird, config_path=cfg_path)
+            self.assertEqual(load_config(cfg_path)["volc"]["api_key"], weird)
 
 
 if __name__ == "__main__":

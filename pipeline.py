@@ -26,7 +26,7 @@ sys.path.insert(0, BASE_DIR)
 
 from asr_client import AsrClient, parse_utterances
 from config_loader import ConfigError, load_config
-from docx_writer import save_minutes_docx
+from docx_writer import save_minutes_pair
 from minutes_llm import generate_minutes
 from speaker_map import _map_speakers
 from streaming_asr import MeetingStreamSession
@@ -111,9 +111,9 @@ def run_pipeline(wav_path=None, progress=None, cfg=None,
         progress("minutes", "（DeepSeek 思考中，通常一两分钟）")
     markdown = generate_minutes(cfg, renamed)
 
-    # 4. docx 导出
+    # 4. 成对导出（Word + Markdown 同名成对）
     out_dir = _out_dir(cfg)
-    docx_path = save_minutes_docx(markdown, out_dir)
+    docx_path, md_path = save_minutes_pair(markdown, out_dir)
 
     # 5. 可选：第二大脑入库（默认关，失败不阻断）
     try:
@@ -124,16 +124,18 @@ def run_pipeline(wav_path=None, progress=None, cfg=None,
 
     if progress:
         progress("done", "")
-    log.info("[完成] 总耗时 %.1f 秒，纪要：%s", time.monotonic() - t0, docx_path)
-    return docx_path, {"mapping": mapping, "utterance_count": len(utterances)}
+    log.info("[完成] 总耗时 %.1f 秒，纪要：%s（md：%s）",
+             time.monotonic() - t0, docx_path, md_path)
+    return docx_path, {"mapping": mapping, "utterance_count": len(utterances),
+                       "md_path": md_path}
 
 
 def run_pipeline_streaming(utterances, progress=None, cfg=None):
-    """流式主路径散会管线：收集好的 utterances → 报到映射 → DeepSeek → docx。
+    """流式主路径散会管线：收集好的 utterances → 报到映射 → DeepSeek → docx+md。
 
     识别环节在开会时已由 MeetingStreamSession 实时完成（并已逐句落盘），
-    散会到这里只剩 映射→纪要→docx，复用 _map_speakers / generate_minutes /
-    save_minutes_docx，与文件识别路径同一套逻辑（单一来源）。
+    散会到这里只剩 映射→纪要→成对导出，复用 _map_speakers / generate_minutes /
+    save_minutes_pair，与文件识别路径同一套逻辑（单一来源）。
     """
     cfg = cfg or load_config()
     t0 = time.monotonic()
@@ -156,9 +158,9 @@ def run_pipeline_streaming(utterances, progress=None, cfg=None):
         progress("minutes", "（DeepSeek 思考中，通常一两分钟）")
     markdown = generate_minutes(cfg, renamed)
 
-    # 3. docx 导出
+    # 3. 成对导出（Word + Markdown 同名成对）
     out_dir = _out_dir(cfg)
-    docx_path = save_minutes_docx(markdown, out_dir)
+    docx_path, md_path = save_minutes_pair(markdown, out_dir)
 
     # 4. 可选：第二大脑入库（默认关，失败不阻断）
     try:
@@ -169,8 +171,10 @@ def run_pipeline_streaming(utterances, progress=None, cfg=None):
 
     if progress:
         progress("done", "")
-    log.info("[完成] 总耗时 %.1f 秒，纪要：%s", time.monotonic() - t0, docx_path)
-    return docx_path, {"mapping": mapping, "utterance_count": len(utterances)}
+    log.info("[完成] 总耗时 %.1f 秒，纪要：%s（md：%s）",
+             time.monotonic() - t0, docx_path, md_path)
+    return docx_path, {"mapping": mapping, "utterance_count": len(utterances),
+                       "md_path": md_path}
 
 
 def _test_stream_wav(wav_path):
@@ -266,7 +270,8 @@ def main(argv=None):
     except (ConfigError, RuntimeError, OSError) as e:
         print(f"\n失败：{e}", file=sys.stderr)
         return 1
-    print(f"\n已生成：{path}")
+    print(f"\n已生成 Word：{path}")
+    print(f"已生成 Markdown：{report['md_path']}")
     return 0
 
 

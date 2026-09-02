@@ -78,14 +78,19 @@
 - 运行：`.venv\Scripts\python 会议记录.py`；流式验收：
   `python pipeline.py --test-stream-wav <wav>`；备用文件路径：
   `python pipeline.py <wav>`（`--mock-asr` / `--audio-url` 调试用）
-- 产物目录：`录音/`（wav，本地备份+file-mode 备用）、`输出/`（docx）、
-  `日志/`（每天日志 + `transcript_*.jsonl` 流式逐句落盘）；配置 `config.toml`
+- 产物目录：`录音/`（wav，本地备份+file-mode 备用）、`输出/`（docx+md
+  同名成对导出，save_minutes_pair）、`日志/`（每天日志 + `transcript_*.jsonl`
+  流式逐句落盘）；配置 `config.toml`
   （本地，不分享，.gitignore 已排除）。输出目录可在 GUI 更改（持久化到
   config.toml 的 [app] output_dir，留空=程序目录下「输出」文件夹，
   pipeline._out_dir 统一回落）。
-- 测试：`python -m unittest discover -s tests -v`——46 个用例覆盖 流式二进制帧
+- GUI「设置…」可查看/修改豆包语音与 DeepSeek 两个 API Key（写回 config.toml
+  的 [volc]/[deepseek] api_key，留空=走环境变量兜底；保存有格式软校验，
+  日志只记长度绝不写明文）。
+- 测试：`python -m unittest discover -s tests -v`——54 个用例覆盖 流式二进制帧
   roundtrip / definite 抽取 / speaker 字段兼容 / 增量映射 / 断线重连模拟 /
-  DeepSeek 自动重试 / 输出目录配置与写回。改动后必跑 py_compile + 全量单测 +
+  DeepSeek 自动重试 / 输出目录与 API Key 配置读写（save_config_value 泛化写回）/
+  纪要成对导出（docx+md 同基名）。改动后必跑 py_compile + 全量单测 +
   `--test-stream-wav` 真链 + mock 全链。
 
 - 版本控制：2026-09-02 已 git init 并首提交（main 分支）；config.toml、

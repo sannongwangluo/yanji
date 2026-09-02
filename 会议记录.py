@@ -20,6 +20,7 @@ DeepSeek → docx。识别不再等散会后上传，散会后只需等纪要生
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -29,7 +30,7 @@ from tkinter import filedialog, messagebox, ttk
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-from config_loader import ConfigError, load_config, save_output_dir
+from config_loader import ConfigError, load_config, save_config_value, save_output_dir
 from pipeline import STATE_TEXT, _out_dir, run_pipeline_streaming, setup_logging
 from recorder import Recorder, RecorderError
 from speaker_map import IncrementalSpeakerMap
@@ -60,7 +61,8 @@ class App:
     # ---------------- 界面 ----------------
     def _build_ui(self):
         self.root.title(WINDOW_TITLE)
-        self.root.geometry("680x620")
+        self.root.geometry("920x780")
+        self.root.minsize(760, 640)
         self.root.resizable(True, True)
         pad = {"padx": 18, "pady": 4}
 
@@ -100,7 +102,9 @@ class App:
                                        font=("Microsoft YaHei UI", 9))
         self.out_dir_label.pack(side="left", padx=(0, 8))
         ttk.Button(out_row, text="更改…", width=8,
-                   command=self._choose_out_dir).pack(side="left")
+                   command=self._choose_out_dir).pack(side="left", padx=(0, 6))
+        ttk.Button(out_row, text="设置…", width=8,
+                   command=self._open_settings).pack(side="left")
         self._refresh_out_dir_label()
 
         # 实时转写区（只读滚动文本）
@@ -149,6 +153,79 @@ class App:
         self._refresh_out_dir_label()
         log.info("[输出目录] 纪要保存目录改为 %s", chosen)
 
+    def _open_settings(self):
+        """设置窗：查看/修改豆包语音、DeepSeek 两个 API Key（写回 config.toml）。"""
+        win = tk.Toplevel(self.root)
+        win.title("设置 —— API Key")
+        win.geometry("540x250")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        pad = {"padx": 14, "pady": 5}
+
+        ttk.Label(win, text="API Key 设置（保存后写回 config.toml，下次启动生效）",
+                  font=("Microsoft YaHei UI", 10, "bold")).pack(pady=(12, 4))
+
+        ttk.Label(win, text="豆包语音 API Key（UUID 格式）").pack(anchor="w", **pad)
+        volc_entry = ttk.Entry(win, show="*", width=62)
+        volc_entry.pack(**pad)
+        volc_entry.insert(0, self.cfg["volc"]["api_key"])
+
+        ttk.Label(win, text="DeepSeek API Key（sk- 开头）").pack(anchor="w", **pad)
+        ds_entry = ttk.Entry(win, show="*", width=62)
+        ds_entry.pack(**pad)
+        ds_entry.insert(0, self.cfg["deepseek"]["api_key"])
+
+        show_var = tk.BooleanVar(value=False)
+
+        def _toggle_show():
+            show_char = "" if show_var.get() else "*"
+            volc_entry.config(show=show_char)
+            ds_entry.config(show=show_char)
+
+        ttk.Checkbutton(win, text="显示明文", variable=show_var,
+                        command=_toggle_show).pack(anchor="w", **pad)
+
+        btns = ttk.Frame(win)
+        btns.pack(pady=(8, 12))
+        ttk.Button(btns, text="保存", width=10,
+                   command=lambda: self._save_settings(
+                       win, volc_entry.get().strip(), ds_entry.get().strip())
+                   ).pack(side="left", padx=8)
+        ttk.Button(btns, text="取消", width=10,
+                   command=win.destroy).pack(side="left", padx=8)
+
+    def _save_settings(self, win, volc_key, ds_key):
+        """保存设置窗里的两个 key：软校验 → 写回 config.toml → 更新内存 cfg。
+
+        日志绝不写 key 明文，只记长度；允许清空（清空 = 走环境变量兜底）。
+        """
+        # 软校验：格式不像就确认一次再保存
+        checks = []
+        if volc_key and not re.match(
+                r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", volc_key):
+            checks.append("豆包语音 Key 不像 UUID 格式")
+        if ds_key and not ds_key.startswith("sk-"):
+            checks.append("DeepSeek Key 不以 sk- 开头")
+        if checks:
+            if not messagebox.askyesno(
+                    "格式确认", "；".join(checks) + "。\n格式看起来不对，确定保存吗？\n"
+                    "（留空也可以保存，将改用环境变量里的 Key）"):
+                return
+        try:
+            save_config_value("volc", "api_key", volc_key)
+            save_config_value("deepseek", "api_key", ds_key)
+        except OSError as e:
+            log.exception("[设置] 写 config.toml 失败")
+            messagebox.showerror("保存失败", f"写入 config.toml 失败：\n{e}")
+            return
+        self.cfg["volc"]["api_key"] = volc_key
+        self.cfg["deepseek"]["api_key"] = ds_key
+        win.destroy()
+        log.info("[设置] 豆包语音 key 已更新（%d字符）；DeepSeek key 已更新（%d字符）",
+                 len(volc_key), len(ds_key))
+
     def _reset_transcript(self):
         """清空转写区，放回占位提示。"""
         self._got_text = False
@@ -160,15 +237,24 @@ class App:
         self.transcript.configure(state="disabled")
 
     def _append_utterance(self, speaker_name, text):
-        """主线程里追加一行「姓名/说话人N：文本」（只读区临时放行插入）。"""
+        """主线程里追加一行「姓名/说话人N：文本」（只读区临时放行插入）。
+
+        智能跟随：插入前记视口底部位置，用户在底部（含首句替换占位提示）才
+        自动滚到底；往上翻看历史时保持视口不动。Text 处于 disabled 不影响
+        滚动条和滚轮，无需额外绑定。
+        """
         if not self._got_text:
             self.transcript.configure(state="normal")
             self.transcript.delete("1.0", "end")
             self.transcript.configure(state="disabled")
             self._got_text = True
+            at_bottom = True  # 首句替换占位提示，视同在底部
+        else:
+            at_bottom = self.transcript.yview()[1] >= 0.98
         self.transcript.configure(state="normal")
         self.transcript.insert("end", f"{speaker_name}：{text}\n")
-        self.transcript.see("end")
+        if at_bottom:
+            self.transcript.see("end")
         self.transcript.configure(state="disabled")
 
     def _set_status(self, text, color="#222222"):
@@ -261,7 +347,7 @@ class App:
             session.finish()
             utterances = session.utterances
         try:
-            docx_path, _report = run_pipeline_streaming(
+            docx_path, report = run_pipeline_streaming(
                 utterances, progress=progress, cfg=self.cfg)
         except ConfigError as e:
             log.warning("[管线] 配置问题：%s", e)
@@ -276,7 +362,7 @@ class App:
             log.exception("[管线] 出稿失败")
             self.progress_q.put(("error", "生成失败，请查看项目「日志」文件夹里的最新日志。"))
             return
-        self.progress_q.put(("done", docx_path))
+        self.progress_q.put(("done", (docx_path, report["md_path"])))
 
     # ---------------- 队列轮询（主线程） ----------------
     def _poll_queues(self):
@@ -327,9 +413,11 @@ class App:
             text = f"{text}{detail}"
         self._set_status(text + "…", "#8e44ad")
 
-    def _finish(self, docx_path):
+    def _finish(self, pair):
+        docx_path, md_path = pair
         out_dir = os.path.dirname(docx_path)
-        messagebox.showinfo("已完成", f"已生成会议纪要：\n{docx_path}")
+        messagebox.showinfo("已完成", f"已生成会议纪要（Word + Markdown）：\n"
+                                      f"{docx_path}\n{md_path}")
         try:
             os.startfile(out_dir)  # Windows：打开输出文件夹
         except OSError:

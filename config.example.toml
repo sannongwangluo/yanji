@@ -6,6 +6,7 @@
 [volc]
 # 豆包语音识别 API Key（UUID 格式），火山新版豆包语音控制台签发。
 # 环境变量兜底：VOLC_API_KEY / VOLCENGINE_API_KEY
+# GUI「设置…」里也可改（改动写回这里）。
 api_key = ""
 # 资源 ID：豆包录音文件识别模型 2.0（标准版）。仅 --file-mode 备用路径用，一般不用改。
 resource_id = "volc.seedasr.auc"
@@ -34,6 +35,7 @@ endpoint = ""          # 留空则按 region 自动生成（tos-<region>.volces.
 
 [deepseek]
 # DeepSeek 用于生成会议纪要。环境变量兜底：DEEPSEEK_API_KEY
+# GUI「设置…」里也可改（改动写回这里）。
 api_key = ""
 model = "deepseek-v4-flash"
 endpoint = "https://api.deepseek.com/v1/chat/completions"
