@@ -1,123 +1,139 @@
-# 会议记录（试用版）
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-一个给中小公司开会用的小工具：**边开会边出字，散会自动出一份 Word 会议纪要**。
+# YanJi 言纪 · AI Meeting Minutes for Chinese Teams
 
-- 实时转写：长连接流式识别（火山豆包大模型），开会时主窗口实时滚动每个人的发言
-- 谁说了什么：自动分人（开会前每人对着麦克风说一句「我是+姓名」）
-- 断线不怕：网络抖动自动重连；每句转写实时落盘 `日志/transcript_*.jsonl`，崩机不丢
-- 出什么：Word 文档（.docx），含 会议主题 / 参会人 / 发言摘要 / 决议事项 / 待办（责任人+期限）/ 分歧与遗留问题
-- 成本：一小时会议全程约 **1 元**（语音识别约 9 毛 + 纪要生成几分钱）
+A Windows desktop tool for Chinese-language meetings: **live transcription with speaker labels while the meeting runs, and one-click minutes exported as Word + Markdown when it ends**.
 
----
+## Screenshots
 
-## 怎么用（三步）
+Main window (scrolling live transcript + microphone level meter):
 
-1. 双击/命令行启动程序，点 **【开始录音】**（开会的手机/全向麦或电脑麦克风都行）
-2. 开会。**开头先每人依次说一句「我是+姓名」**，比如「我是张三」——窗口里实时滚动出 `张三：……` 的文字
-3. 散会时点 **【结束并生成纪要】**：转写稿开会时已经实时攒好了，直接交给 DeepSeek，通常一两分钟出 docx，自动打开「输出」文件夹
+![Main window](docs/images/main-window.png)
 
-> 状态行随时显示「流式已连接 / 已识别 N 句」。识别是实时的，散会后基本不用等识别，只在生成纪要时等一两分钟。
+Settings window (fill in or change the Volcano Speech and DeepSeek API keys):
 
-## 开会纪律建议（影响识别质量，建议会前说一句）
+![Settings window](docs/images/settings.png)
 
-- **一人一句、别抢话**：同时说话会让识别分不清是谁说的
-- **离麦克风 2 米以内**说话，太远声音小、识别会漏字
-- 开头报到时说清楚：轮到自己就报「我是XX」，一句话说完就停，**别连说两遍**
-- 环境尽量安静，敲键盘、挪椅子的声音问题不大，但旁边人聊天会被录进去
+## How it works
 
-## 隐私说明（请务必读）
-
-1. 音频以**实时流**方式上传到你自己的火山引擎云端做语音识别，**云端不保存音频文件**
-2. 识别出的文字会发给 DeepSeek 生成纪要（也是一家 AI 云服务）
-3. 本地会保留一份录音文件在「录音」文件夹（流式不可用时可用备用路径补出稿），不需要可以自己删
-4. 每句转写也会留在本地「日志」文件夹的 `transcript_*.jsonl` 里，崩机/断电也不丢
-5. 涉及商业机密的会议，建议自行评估是否适合用云端识别；本工具不会把数据发给除以上两家之外的任何服务
-
-## 成本
-
-- 语音识别：约 **0.9 元/小时**（火山官方资源包 28 元/30 小时，实际以控制台定价为准）
-- 纪要生成（DeepSeek）：每次几分钱
-- 合计：**一小时会议约 1 元**
-
-## 首次配置（只配一次，照着做约 10 分钟）
-
-程序需要两样东西，都配在项目里的 `config.toml` 文件（先复制 `config.example.toml` 改名为 `config.toml`）。填哪一项都写在下面了。
-
-### 第 1 步：火山引擎「豆包语音」——API Key + 开通流式识别
-
-1. 打开 https://console.volcengine.com/speech/new/ （注意是 `/speech/new/`，新版控制台，不是旧版 `/speech/app`）
-2. 左侧菜单 →「语音识别」→ 点「开通模型」，**开通「流式语音识别 2.0（时长版）」**（这一步最容易被漏掉）
-3. 点页面右上角「API 调用」→ Step 1「获取 API Key」→ 创建 API Key，复制那串 UUID 样式的 Key
-4. 填到 config.toml：`[volc]` 的 `api_key = "粘贴到这里"`（也可以设置环境变量 `VOLC_API_KEY`）
-
-其余流式参数在 `[streaming]` 一节，默认值已按推荐配好，一般不用改。
-
-### 第 2 步：DeepSeek（生成纪要的大脑）
-
-1. 在 DeepSeek 开放平台注册并充值一点点（几块钱能用很久）
-2. 创建 API Key，填到 config.toml：`[deepseek]` 的 `api_key`（也可以设置环境变量 `DEEPSEEK_API_KEY`）
-
-配完重启程序，点「开始录音」→ 说句话 → 「结束并生成纪要」，出文档就说明通了。
-
-## 备用路径：文件识别（--file-mode，流式不可用才用）
-
-流式连不上（没开流式额度、网络受限等）时，可以用文件识别路径补出稿——录好的 wav 上传火山对象存储 TOS，提交「录音文件识别 2.0」任务，轮询出结果后走同一条 映射→纪要→docx 管线：
-
-```
-.venv\Scripts\python pipeline.py 录音\会议录音_20260902_0930.wav
+```mermaid
+flowchart LR
+    A[Meeting starts<br/>attendees say 我是X] --> B[Streaming ASR + speaker labels<br/>Volcano 2.0 · 200 ms/packet · two-pass<br/>ssd + check-in mapping]
+    B --> C[Meeting ends]
+    C --> D[DeepSeek minutes<br/>deepseek-v4-flash]
+    D --> E[docx + md<br/>paired export]
 ```
 
-这条路径需要额外配置 `[tos]` 一节（IAM 密钥 + 存储桶），**默认流式主流程用不到，可留空**：
+## Features
 
-1. 打开 https://console.volcengine.com/iam/usermanage →「新建用户」，勾选「编程访问」，复制 Access Key ID（`AKLT` 开头）和 Secret Access Key
-2. 打开 https://console.volcengine.com/tos 开通对象存储 →「创建桶」（如 `huiyi-audio`，区域内地选 `cn-beijing`）→ 桶的「权限管理→存储桶授权策略管理」→ 选「文件夹读写」模板授权（读+写都要）
-3. 填 config.toml 的 `[tos]` 三项：`access_key_id` / `secret_access_key` / `bucket`
-4. 另外还要在语音控制台开通「录音文件识别2.0」（标准版）
+- **Real-time transcription**: Volcano Doubao LLM streaming speech recognition 2.0 (duration edition) over a bidirectional WebSocket, uploading 200 ms audio packets in real time; `enable_nonstream` two-pass recognition shows each speaker's words live in the main window
+- **Who said what**: Volcano `ssd` speaker diarization plus "check-in mapping" — each attendee says "I'm + name" at the start to bind a name (no voiceprint needed); unattributed speakers show as "Speaker N"
+- **Network-proof**: exponential-backoff auto-reconnect (up to 5 attempts); every utterance is appended to `日志/transcript_*.jsonl` in real time, so a crash loses at most a line or two
+- **Output**: DeepSeek organizes the transcript by speaker turns into a docx with three-level formatting (heading / body / list), exported as a matched docx + md pair
 
-## 命令行验收（给帮忙配置的人）
+## Quick start
 
-```
-.venv\Scripts\python pipeline.py --test-stream-wav 任意16k.wav   # 流式真实链路：200ms 实时喂音频，打印每句
-.venv\Scripts\python pipeline.py --mock-asr tests\fake_asr_result.json  # 文件路径用本地假识别结果验收
-.venv\Scripts\python pipeline.py --audio-url <公网音频URL>        # 文件路径跳过 TOS 上传（调试）
-```
+1. Launch the app and click **Start recording** (phone, omnidirectional mic, or laptop mic all work)
+2. Hold the meeting. **At the start, each attendee says "I'm + name" once**, e.g. "我是张三" — the window scrolls live lines like `张三：……`
+3. Click **Finish & generate minutes** when the meeting ends: the transcript is already collected in real time and goes straight to DeepSeek, usually producing the docx in a minute or two and opening the output folder
 
-流式测试音频不是 16kHz 会自动线性重采样。每句 definite 分句会打印 `speaker + text`，转写同时落盘到 `日志/transcript_*.jsonl`。
+> The status bar shows "streaming connected / N utterances recognized". Recognition is real-time, so after the meeting you only wait for the minutes generation, not for recognition.
 
-## 常见问题
+## Configuration (one-time, ~10 minutes)
 
-**Q：纪要里出现「说话人3」是谁？**
-A：说明这位参会人报到那句「我是XX」没被听清。找到「录音」里的录音或直接在 Word 里把「说话人3」改成真名即可。下次开会让 TA 报到时说清楚、离麦近一点。
+The app needs two things, both configured in `config.toml` (copy `config.example.toml` and rename it to `config.toml`). You can also fill them in the GUI **Settings…** window, which writes them back to `config.toml`.
 
-**Q：点「开始录音」报错"打不开麦克风"？**
-A：检查电脑有没有接麦克风、系统设置→隐私→麦克风 是否允许了本程序。
+### Step 1: Volcano Engine "Doubao Speech" — API key + enable streaming recognition
 
-**Q：状态行显示"连接中断，自动重连中…"？**
-A：网络闪断了，程序会自动重连（最多 5 次、指数退避）。重连成功后文字会继续出；注意日志会提示「说话人标签可能漂移」——新连接的说话人编号可能和之前对不上，散会后在 Word 里核对一下人名。一直连不上会提示"连接已断开"，录音不受影响，散会可用上面「备用路径」补出稿。
+1. Open https://console.volcengine.com/speech/new/ (the new console, not the old `/speech/app`)
+2. Left menu → Speech recognition → **Enable "Streaming Speech Recognition 2.0 (duration edition)"** (this step is the easiest to miss)
+3. Click "API access" in the top-right → "Get API key" → create a key and copy the UUID-style string
+4. Put it in `config.toml` under `[volc]`: `api_key = "paste here"` (or set the `VOLC_API_KEY` environment variable)
 
-**Q：连接失败提示"流式识别失败"？**
-A：去 https://console.volcengine.com/speech/new/ → 语音识别 → 开通模型 → 确认已开通「流式语音识别 2.0（时长版）」（开通后有分钟级生效延迟），并检查 config.toml 的 `api_key`。
+### Step 2: DeepSeek (the minutes brain)
 
-**Q：报错"还没开通录音文件识别"（错误码 45000030）？**
-A：这是**备用文件路径**才需要的。去 https://console.volcengine.com/speech/new/ → 开通「录音文件识别2.0」再试。
+1. Sign up on the DeepSeek platform and top up a small amount (a few yuan lasts a long time)
+2. Create an API key and put it in `config.toml` under `[deepseek]`: `api_key` (or set the `DEEPSEEK_API_KEY` environment variable)
 
-**Q：备用路径报错"上传音频到 TOS 被拒绝（403）"或"下载不到音频"（45000006）？**
-A：桶策略没配好。给桶加「文件夹读写」策略（**读和写都要**）。
+Restart, click "Start recording" → say something → "Finish & generate minutes"; if a document comes out, you're all set.
 
-**Q：生成的纪要不见了？**
-A：在程序所在文件夹的「输出」文件夹里，文件名 `会议纪要_年月日_时分.docx`。
+## Running
 
-**Q：出错了，怎么找原因？**
-A：程序文件夹的「日志」文件夹里有每天的日志文件，把出错时间附近的日志发给帮你配置的人看。
-
-## 安装（给帮忙配置的人）
-
-1. 需要 Python 3.11+（推荐 3.14），安装到电脑
-2. 建独立环境并装依赖：
-
-```
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+```bash
+python yanji.py           # English entry point (equivalent to the Chinese one below)
+python 会议记录.py        # Chinese entry point
 ```
 
-3. 启动：`.venv\Scripts\python 会议记录.py`
+CLI verification / fallback path:
+
+```bash
+python pipeline.py --test-stream-wav <wav>   # real streaming loopback (feeds audio in 200 ms chunks)
+python pipeline.py <wav>                     # file-recognition path (fallback)
+```
+
+Run the tests:
+
+```bash
+python -m unittest discover -s tests         # 54 test cases
+```
+
+## Fallback path: file recognition (--file-mode)
+
+When streaming won't connect (no streaming quota, network restrictions, etc.), the file path can still produce a transcript — the recorded wav is uploaded to Volcano TOS, a "recording file recognition 2.0" job is submitted, and the result goes through the same mapping → minutes → docx pipeline:
+
+```bash
+python pipeline.py 录音/会议录音_20260902_0930.wav
+```
+
+This path needs the extra `[tos]` section (IAM keys + bucket). The default streaming path doesn't use it and can be left empty.
+
+## Known limitations
+
+1. **Speaker splitting**: Volcano `ssd` may split one person into multiple labels on low-volume or far-field speech (physical fix: sit closer, speak up, or use an omnidirectional mic)
+2. **Label drift**: speaker labels may drift after a reconnect (each reconnect is a new diarization session; double-check names in Word afterward)
+3. **Windows only**: this tool targets the Windows desktop
+4. **Pay-as-you-go**: both the Volcano speech recognition and DeepSeek APIs are billed by usage
+
+## Why the cloud (vs local solutions)
+
+Compared with local solutions like meetily, we use the cloud in exchange for **Chinese recognition quality** (small local models hallucinate a lot on Chinese meeting audio) and **out-of-the-box Chinese docx minutes**. A local engine (SenseVoice) is on the roadmap; teams that are uncomfortable sending audio to the cloud should pick a local solution instead.
+
+## Privacy (please read)
+
+1. Audio is uploaded as a **real-time stream** to your own Volcano Engine cloud for recognition; **the cloud does not persist the audio file**
+2. The recognized text is sent to DeepSeek to generate the minutes (another AI cloud service)
+3. A local recording is kept in the `录音` folder (used by the fallback path if streaming is unavailable); delete it yourself if you don't need it
+4. Every utterance is also kept locally in `日志/transcript_*.jsonl`, so a crash or power loss won't lose the transcript
+5. For meetings involving trade secrets, assess for yourself whether cloud recognition is appropriate; this tool sends data only to the two services above
+
+## Cost
+
+- Speech recognition: about **¥0.9/hour** (Volcano official bundle is ¥28 for 30 hours; check the console for current pricing)
+- Minutes generation (DeepSeek): a few cents per meeting
+- Total: about **¥1 for a one-hour meeting** (both billed by usage)
+
+## FAQ
+
+**Q: Who is "Speaker 3" in the minutes?**
+A: That attendee's "I'm XX" check-in wasn't heard clearly. Find the recording in `录音` or just edit "Speaker 3" to the real name in Word. Next time, have them check in clearly and closer to the mic.
+
+**Q: The status bar shows "connection interrupted, reconnecting…"?**
+A: The network hiccuped; the app reconnects automatically (up to 5 attempts with exponential backoff). Transcription resumes after a successful reconnect, but note that speaker labels may drift — verify names in Word afterward. If it never reconnects, recording continues unaffected; use the fallback path to produce the transcript later.
+
+**Q: Connection fails with "streaming recognition failed"?**
+A: Go to https://console.volcengine.com/speech/new/ → Speech recognition → enable models → confirm "Streaming Speech Recognition 2.0 (duration edition)" is enabled (takes a few minutes to take effect), and check `api_key` in `config.toml`.
+
+**Q: Error "recording file recognition not enabled" (code 45000030)?**
+A: This is only needed for the **fallback file path**. Go to https://console.volcengine.com/speech/new/ and enable "Recording File Recognition 2.0".
+
+**Q: Fallback path errors with "upload to TOS denied (403)" or "cannot download audio" (45000006)?**
+A: The bucket policy isn't set up. Add a "folder read/write" policy (both read **and** write).
+
+**Q: Where did my minutes go?**
+A: In the `输出` folder next to the app, named `会议纪要_YYYYMMDD_HHMM.docx`.
+
+## License
+
+[MIT](LICENSE) © 2026 Hangzhou Sannong Network Technology Co., Ltd.
+
+Website [88lv.com](https://88lv.com) · Contact [contact@88lv.com](mailto:contact@88lv.com)
