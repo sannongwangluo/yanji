@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""会议记录 —— 桌面小工具（试用版）。python 会议记录.py 启动。
+"""会议记录 —— 中文会议记录桌面工具。python 会议记录.py 或 python yanji.py 启动。
 
 主流程：点「开始录音」→ 录音 + 长连接流式识别边录边出字（主区域实时滚动
 「姓名/说话人N：文本」）→ 散会点「结束并生成纪要」→ 已收集的转写稿直接给
@@ -39,7 +39,7 @@ from streaming_asr import MeetingStreamSession
 
 log = logging.getLogger("会议记录")
 
-WINDOW_TITLE = "会议记录（试用版）"
+WINDOW_TITLE = "YanJi 言纪 · 会议记录"
 
 
 class App:
@@ -455,7 +455,7 @@ class App:
 def main():
     setup_logging()
     log.info("=" * 40)
-    log.info("[启动] 会议记录（试用版）")
+    log.info("[启动] YanJi 言纪 · 会议记录")
     root = tk.Tk()
     App(root)
     root.mainloop()

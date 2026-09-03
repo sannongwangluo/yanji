@@ -108,7 +108,7 @@ Compared with local solutions like meetily, we use the cloud in exchange for **C
 
 ## Cost
 
-- Speech recognition: about **¥0.9/hour** (Volcano official bundle is ¥28 for 30 hours; check the console for current pricing)
+- Speech recognition and polishing are both pay-per-use; see the consoles for current pricing
 - Minutes generation (DeepSeek): a few cents per meeting
 - Total: about **¥1 for a one-hour meeting** (both billed by usage)
 
