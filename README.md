@@ -151,7 +151,6 @@ A: In the `输出` folder next to the app, named `会议纪要_YYYYMMDD_HHMM.doc
 
 ## Roadmap
 
-- **Demo GIF** — a short animated demo of the live transcription workflow (coming soon)
 - **CI auto-packaging** — `YanJi.exe` is built automatically on every release tag (added in this change)
 - **v2 local privacy engine** — SenseVoice on-device recognition: whole-audio recognition first, speaker diarization after
 - **More export formats** — Markdown and other formats
