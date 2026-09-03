@@ -8,6 +8,8 @@ A Windows desktop tool for Chinese-language meetings: **live transcription with 
 
 **[Download YanJi.exe for Windows →](https://github.com/sannongwangluo/yanji/releases/latest)**
 
+![Demo](docs/images/demo.gif)
+
 ## Screenshots
 
 Main window (scrolling live transcript + microphone level meter):

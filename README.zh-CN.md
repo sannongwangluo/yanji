@@ -8,6 +8,8 @@
 
 **[下载 YanJi.exe（Windows 版）→](https://github.com/sannongwangluo/yanji/releases/latest)**
 
+![Demo](docs/images/demo.gif)
+
 ## 截图
 
 主窗口（实时滚动转写区 + 麦克风电平显示）：
