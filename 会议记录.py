@@ -27,10 +27,11 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+from config_loader import (
+    ConfigError, app_base_dir, load_config, save_config_value, save_output_dir)
 
-from config_loader import ConfigError, load_config, save_config_value, save_output_dir
+BASE_DIR = app_base_dir()
+sys.path.insert(0, BASE_DIR)
 from pipeline import STATE_TEXT, _out_dir, run_pipeline_streaming, setup_logging
 from recorder import Recorder, RecorderError
 from speaker_map import IncrementalSpeakerMap

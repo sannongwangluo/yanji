@@ -105,3 +105,37 @@
 4. 流式 sender 线程（会话内部）：从音频缓冲队列取帧发送；
 5. 管线线程：散会后单开工作线程跑 流式收尾→全量映射→纪要→docx。
    转写回调只把 utterance 塞队列，增量报到映射在主线程做。
+
+## PyInstaller 打包定版（2026-09-03）
+
+- **冻结态 BASE_DIR 修复（关键，先于打包落地）**：`config_loader.py` / `pipeline.py` /
+  `会议记录.py` / `streaming_asr.py` 原本都用 `os.path.dirname(os.path.abspath(__file__))`
+  定 `BASE_DIR`，PyInstaller 单文件 exe 里 `__file__` 指向临时解压目录 `_MEIPASS`
+  （退出即删），会导致 config.toml / 录音 / 输出 / 日志 全写到临时目录而丢失。
+  修复 = `config_loader.py` 新增 `app_base_dir()`（`sys.frozen` 时用
+  `os.path.dirname(sys.executable)`，否则用源码目录），其余三处改为 `from
+  config_loader import app_base_dir; BASE_DIR = app_base_dir()`。改后 54 单测仍全绿。
+- **打包命令**（在项目目录、用 venv python）：
+  `./.venv/Scripts/python.exe -m PyInstaller --onefile --windowed --collect-all sounddevice --collect-all docx --name 会议记录 会议记录.py`
+  - `--collect-all sounddevice` 兜 PortAudio DLL；`--collect-all docx` 兜 python-docx
+    默认模板 `default.docx`（否则出稿时 `Document()` 会缺模板报错）。
+  - 产物 `dist\会议记录.exe`，约 31M（31552768 字节）。
+- **冒烟测试结论（2026-09-03，通过）**：用 `cmd //c start` 脱机（等价双击）拉起 exe
+  约 16s，进程存活（`taskkill /F /IM 会议记录.exe` 命中 2 个 PID = bootloader 父 + 应用
+  子进程，PyInstaller 单文件正常），无闪退；`日志/会议记录_20260903.log` 生成在 exe
+  旁边（而非 _MEIPASS），证明 BASE_DIR 修复生效；windowed 模式下 `sys.stdout` 非 None、
+  `StreamHandler(sys.stdout)` 不崩（实测，无需加 None 守卫）。
+- **分发文件夹**：`D:\会议记录工具`，内含 `会议记录.exe` + 空白 `config.toml`（由
+  `config.example.toml` 拷贝，两个 api_key 均空串，**绝不含真实 Key**）+ `使用说明书.md`
+  + `使用说明书.docx`。
+- **以后重打**：改代码后跑 `py_compile` + 全量单测，再执行上述打包命令，把新的
+  `dist\会议记录.exe` 覆盖到 `D:\会议记录工具\会议记录.exe`；spec 文件 `会议记录.spec`
+  保留在项目根目录，可复用；`build/`、`dist/` 打完后删掉。
+- **说明书排版定版（2026-09-03，用户拍板）**：源 `D:\会议记录工具\使用说明书.md`
+  （口语化、像朋友写给朋友，禁营销腔/粗体轰炸/⚠️/引用块），渲染脚本 `gen_manual_docx.py`
+  （项目根目录，`./.venv/Scripts/python.exe gen_manual_docx.py` 生成 docx）。排版：A4、
+  四边距 2.5cm；正文微软雅黑 11pt（rFonts 设 ascii/hAnsi/eastAsia/cs 全微软雅黑）、1.5 倍
+  行距、段后 6pt；文档标题 20pt 加粗居中；章标题 14pt、小节 12pt 加粗**黑色**（不用内置
+  Heading 样式，避免默认蓝绿）；列表用普通段落+缩进+手动编号；目录树代码块 Consolas 等宽
+  10.5pt+浅灰底纹；粗体只保留按钮名【…】、关键警告、FAQ 问句，每段最多一处。改 md 后重跑
+  脚本即可，勿手改 docx。

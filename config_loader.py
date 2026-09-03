@@ -10,9 +10,23 @@ config.toml（按节定位、只动目标一行，其余原样保留）；save_o
 """
 import os
 import re
+import sys
 import tomllib
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def app_base_dir():
+    """程序数据根目录：config.toml / 录音 / 输出 / 日志 都落在这里。
+
+    PyInstaller 单文件 exe 下 `__file__` 指向临时解压目录（_MEIPASS，退出即删），
+    必须改用 exe 所在目录（sys.executable），否则配置和产物会写到临时目录而丢失。
+    普通 `python xxx.py` 运行时 sys.frozen 不存在，仍用源码目录。
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE_DIR = app_base_dir()
 CONFIG_PATH = os.path.join(BASE_DIR, "config.toml")
 
 

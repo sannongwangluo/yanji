@@ -21,11 +21,12 @@ import os
 import sys
 import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+from config_loader import ConfigError, app_base_dir, load_config
+
+BASE_DIR = app_base_dir()
 sys.path.insert(0, BASE_DIR)
 
 from asr_client import AsrClient, parse_utterances
-from config_loader import ConfigError, load_config
 from docx_writer import save_minutes_pair
 from minutes_llm import generate_minutes
 from speaker_map import _map_speakers

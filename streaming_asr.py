@@ -48,11 +48,11 @@ import uuid
 
 import numpy as np
 
-from config_loader import ConfigError
+from config_loader import ConfigError, app_base_dir
 
 log = logging.getLogger("会议记录")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = app_base_dir()
 
 # ---- 协议常量 ----
 PROTOCOL_VERSION = 0b0001
