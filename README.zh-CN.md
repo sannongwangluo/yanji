@@ -2,7 +2,11 @@
 
 # YanJi 言纪 · 中文会议记录工具
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/sannongwangluo/yanji)](https://github.com/sannongwangluo/yanji/releases/latest) [![Downloads](https://img.shields.io/github/downloads/sannongwangluo/yanji/total)](https://github.com/sannongwangluo/yanji/releases) [![Windows](https://img.shields.io/badge/platform-Windows-blue)](https://github.com/sannongwangluo/yanji) [![CI](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml/badge.svg)](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml)
+
 一个给中文团队开会用的小工具：**开会时边说边出带说话人标签的文字，散会一键生成会议纪要并导出 Word + Markdown**。
+
+**[下载 YanJi.exe（Windows 版）→](https://github.com/sannongwangluo/yanji/releases/latest)**
 
 ## 截图
 
@@ -142,6 +146,13 @@ A：桶策略没配好。给桶加「文件夹读写」策略（**读和写都�
 
 **Q：生成的纪要不见了？**
 A：在程序所在文件夹的「输出」文件夹里，文件名 `会议纪要_年月日_时分.docx`。
+
+## 路线图
+
+- **演示 GIF**：补一段实时转写流程的动图（即将补充）
+- **CI 自动打包**：发布 tag 时自动构建 `YanJi.exe`（本次已加入）
+- **v2 本地隐私引擎**：SenseVoice 本地识别——整段识别先行、说话人分离后置
+- **更多导出格式**：Markdown 等
 
 ## License
 

@@ -2,7 +2,11 @@
 
 # YanJi 言纪 · AI Meeting Minutes for Chinese Teams
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/sannongwangluo/yanji)](https://github.com/sannongwangluo/yanji/releases/latest) [![Downloads](https://img.shields.io/github/downloads/sannongwangluo/yanji/total)](https://github.com/sannongwangluo/yanji/releases) [![Windows](https://img.shields.io/badge/platform-Windows-blue)](https://github.com/sannongwangluo/yanji) [![CI](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml/badge.svg)](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml)
+
 A Windows desktop tool for Chinese-language meetings: **live transcription with speaker labels while the meeting runs, and one-click minutes exported as Word + Markdown when it ends**.
+
+**[Download YanJi.exe for Windows →](https://github.com/sannongwangluo/yanji/releases/latest)**
 
 ## Screenshots
 
@@ -142,6 +146,13 @@ A: The bucket policy isn't set up. Add a "folder read/write" policy (both read *
 
 **Q: Where did my minutes go?**
 A: In the `输出` folder next to the app, named `会议纪要_YYYYMMDD_HHMM.docx`.
+
+## Roadmap
+
+- **Demo GIF** — a short animated demo of the live transcription workflow (coming soon)
+- **CI auto-packaging** — `YanJi.exe` is built automatically on every release tag (added in this change)
+- **v2 local privacy engine** — SenseVoice on-device recognition: whole-audio recognition first, speaker diarization after
+- **More export formats** — Markdown and other formats
 
 ## License
 
