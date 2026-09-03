@@ -98,6 +98,17 @@ This path needs the extra `[tos]` section (IAM keys + bucket). The default strea
 
 Compared with local solutions like meetily, we use the cloud in exchange for **Chinese recognition quality** (small local models hallucinate a lot on Chinese meeting audio) and **out-of-the-box Chinese docx minutes**. A local engine (SenseVoice) is on the roadmap; teams that are uncomfortable sending audio to the cloud should pick a local solution instead.
 
+## vs Doubao desktop (豆包电脑端)
+
+Doubao's own desktop app ships a free "meeting record" feature built on the same Volcano ASR family — so why YanJi? For quick casual notes, honestly, Doubao is enough. YanJi is for **formal, accountable minutes**:
+
+![YanJi vs Doubao desktop](docs/images/vs-doubao.png)
+
+- **Named speakers**: attendees check in with "我是X" and every line is attributed — Doubao's transcript can't tell who said what
+- **Formatted docx deliverable** the moment the meeting ends, not text inside an app
+- **Your data stays on your disk**: audio, transcripts and minutes live locally; only API calls leave the machine — not stored in a consumer cloud account
+- **Open source**: customize the minutes prompt, inject industry hotwords, integrate with your own systems
+
 ## Privacy (please read)
 
 1. Audio is uploaded as a **real-time stream** to your own Volcano Engine cloud for recognition; **the cloud does not persist the audio file**
