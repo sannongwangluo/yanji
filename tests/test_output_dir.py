@@ -57,11 +57,11 @@ class SaveOutputDirTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.toml")
             self._write(cfg_path, "[deepseek]\napi_key = \"x\"\n\n"
-                                  "[app]\ningest_brain_memory = false\n")
+                                  "[app]\ndelete_audio_after_asr = true\n")
             save_output_dir(r"D:\我的纪要", config_path=cfg_path)
             cfg = load_config(cfg_path)
             self.assertEqual(cfg["app"]["output_dir"], r"D:\我的纪要")
-            self.assertFalse(cfg["app"]["ingest_brain_memory"])
+            self.assertTrue(cfg["app"]["delete_audio_after_asr"])
             self.assertEqual(cfg["deepseek"]["api_key"], "x")  # 其余节不受影响
 
     def test_replace_existing_line(self):
@@ -69,14 +69,14 @@ class SaveOutputDirTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.toml")
             self._write(cfg_path, "[app]\noutput_dir = 'D:\\\\旧的'\n"
-                                  "ingest_brain_memory = false\n")
+                                  "delete_audio_after_asr = true\n")
             save_output_dir(r"E:\别处\纪要", config_path=cfg_path)
             with open(cfg_path, encoding="utf-8") as f:
                 text = f.read()
             self.assertEqual(text.count("output_dir"), 1)
             cfg = load_config(cfg_path)
             self.assertEqual(cfg["app"]["output_dir"], r"E:\别处\纪要")
-            self.assertFalse(cfg["app"]["ingest_brain_memory"])
+            self.assertTrue(cfg["app"]["delete_audio_after_asr"])
 
     def test_path_with_quote_uses_basic_string(self):
         """路径含单引号 → 回退 basic string 写入，读回一致。"""

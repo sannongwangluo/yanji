@@ -116,13 +116,6 @@ def run_pipeline(wav_path=None, progress=None, cfg=None,
     out_dir = _out_dir(cfg)
     docx_path, md_path = save_minutes_pair(markdown, out_dir)
 
-    # 5. 可选：第二大脑入库（默认关，失败不阻断）
-    try:
-        from brain_ingest import ingest_minutes
-        ingest_minutes(cfg, markdown)
-    except Exception:
-        log.exception("[第二大脑] 入库失败（不阻断出稿）")
-
     if progress:
         progress("done", "")
     log.info("[完成] 总耗时 %.1f 秒，纪要：%s（md：%s）",
@@ -162,13 +155,6 @@ def run_pipeline_streaming(utterances, progress=None, cfg=None):
     # 3. 成对导出（Word + Markdown 同名成对）
     out_dir = _out_dir(cfg)
     docx_path, md_path = save_minutes_pair(markdown, out_dir)
-
-    # 4. 可选：第二大脑入库（默认关，失败不阻断）
-    try:
-        from brain_ingest import ingest_minutes
-        ingest_minutes(cfg, markdown)
-    except Exception:
-        log.exception("[第二大脑] 入库失败（不阻断出稿）")
 
     if progress:
         progress("done", "")

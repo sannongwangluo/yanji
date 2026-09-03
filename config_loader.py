@@ -131,12 +131,8 @@ def load_config(config_path=None):
             "poll_timeout_sec": _as_int(asr_t.get("poll_timeout_sec"), 1500),
         },
         "app": {
-            # 纪要是否自动写入第二大脑（个人记忆库）。朋友试用必须保持 false。
-            "ingest_brain_memory": _as_bool(app.get("ingest_brain_memory"), False),
             # 识别完成后是否自动从 TOS 删除音频（隐私，建议保持 true）
             "delete_audio_after_asr": _as_bool(app.get("delete_audio_after_asr"), True),
-            "brain_memory_dir": _first(app.get("brain_memory_dir"),
-                                       r"D:\Github 资料\5.0 类脑记忆"),
             # 纪要 docx 输出目录：留空 = 程序目录下「输出」文件夹（pipeline._out_dir 统一回落）
             "output_dir": _first(app.get("output_dir")),
         },

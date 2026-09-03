@@ -3,8 +3,8 @@
 
 - 端点 https://api.deepseek.com/v1/chat/completions，模型 deepseek-v4-flash（config.toml 可改）；
 - 故意不禁用 thinking（不传 thinking=disabled）：纪要是要质量的活，一次调用慢点没关系；
-- 网络层 urllib + 空 ProxyHandler 强制直连：本机有系统代理残留踩坑史（代理内核停了但系统
-  代理还开着时，读系统代理的库会 WinError 10061），api.deepseek.com 国内可直连；
+- 网络层 urllib + 空 ProxyHandler 强制直连：避免系统代理残留导致连接失败（代理内核停了但
+  系统代理还开着时，读系统代理的库会 WinError 10061），api.deepseek.com 国内可直连；
 - 自动重试：空内容 / 网络错误 / HTTP 5xx 视为瞬态，最多重试 2 次（间隔 3 秒）；
   401/403（key 无效/没额度）不重试，直接抛中文错误。
 """

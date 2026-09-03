@@ -101,7 +101,7 @@ class AsrClient:
         self.volc = cfg["volc"]
         self.tos = cfg["tos"]
         self.asr_cfg = cfg["asr"]
-        # trust_env=False：强制直连，不吃系统代理（本机有代理残留踩坑史，
+        # trust_env=False：强制直连，不吃系统代理（避免系统代理残留导致连接失败，
         # 火山这几个域名国内直连即可，走残留代理会 WinError 10061）
         self._sess = requests.Session()
         self._sess.trust_env = False

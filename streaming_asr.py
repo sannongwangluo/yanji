@@ -21,9 +21,9 @@
   说话人字段实测（2026-09-02）为 additions.speaker_id（字符串）；_speaker_of 仍
   兼容 speaker/speaker_id/spk/additions 多路以防版本差异。
 
-设计决策（改前先读项目 AGENTS.md）：
-- 网络层用 websockets 库（sync client）：默认不读系统代理 = 强制直连（本机有
-  系统代理残留踩坑史：代理内核停了但系统代理还开着时，读系统代理的库会
+设计决策：
+- 网络层用 websockets 库（sync client）：默认不读系统代理 = 强制直连（避免
+  系统代理残留导致连接失败：代理内核停了但系统代理还开着时，读系统代理的库会
   WinError 10061；火山域名国内直连即可）；
 - reader / sender 两个线程：reader 收响应 + 断线重连，sender 从音频缓冲队列
   取帧发送。feed() 只做字节转换 + 入队，绝不阻塞、绝不抛异常（它在 PortAudio

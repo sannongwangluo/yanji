@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """把 使用说明书.md 渲染成排版受控的 使用说明书.docx。
 
-排版定版（2026-09-03，用户确认）：A4 / 边距 2.5cm；正文微软雅黑 11pt、1.5 倍行距、
+排版规则：A4 / 边距 2.5cm；正文微软雅黑 11pt、1.5 倍行距、
 段后 6pt；标题三级全部黑色加粗（不用 Word 内置 Heading 样式，避免默认蓝绿色）；
 列表用普通段落 + 缩进 + 手动编号；行内 `code` 与目录树代码块用 Consolas 等宽、
 东亚字体微软雅黑；粗体由 md 里的 ** 控制（已大幅削减）。
 
 用法：python gen_manual_docx.py [md路径] [docx输出路径]
-默认：D:\\会议记录工具\\使用说明书.md -> D:\\会议记录工具\\使用说明书.docx
+默认：使用说明书.md -> 使用说明书.docx（当前目录）
 """
 import re
 import sys
@@ -28,8 +28,8 @@ H2_SIZE = 14
 H3_SIZE = 12
 CODE_SIZE = 10.5
 
-DEFAULT_MD = r"D:\会议记录工具\使用说明书.md"
-DEFAULT_OUT = r"D:\会议记录工具\使用说明书.docx"
+DEFAULT_MD = "使用说明书.md"
+DEFAULT_OUT = "使用说明书.docx"
 
 
 def set_run_font(run, ascii_font, east_font, size, bold, color):

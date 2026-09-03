@@ -51,11 +51,7 @@ poll_interval_sec = 5        # 轮询间隔（秒）
 poll_timeout_sec = 1500      # 最长等 25 分钟（一小时会议识别通常 5~15 分钟）
 
 [app]
-# 纪要是否自动写入第二大脑（个人记忆库）。朋友试用请保持 false。
-ingest_brain_memory = false
 # 识别完成后是否自动从 TOS 删除音频。隐私建议保持 true。
 delete_audio_after_asr = true
-# 第二大脑目录（只有 ingest_brain_memory = true 时才用到）
-brain_memory_dir = "D:\\Github 资料\\5.0 类脑记忆"
 # 纪要 docx 输出目录：留空 = 程序目录下「输出」文件夹；GUI 里也可改（改动会写回这里）。
 output_dir = ""
