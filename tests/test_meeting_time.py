@@ -31,7 +31,7 @@ class MeetingTimeTest(unittest.TestCase):
 
     def test_path_with_dirs(self):
         self.assertEqual(
-            meeting_time_from_text(r"D:\数字合伙人\会议记录\录音\会议录音_20260902_2201.wav"),
+            meeting_time_from_text(r"D:\meetings\录音\会议录音_20260902_2201.wav"),
             "2026-09-02 22:01")
 
     def test_dash_separator_also_ok(self):

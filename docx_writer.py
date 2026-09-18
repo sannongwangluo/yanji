@@ -34,7 +34,7 @@ from docx.shared import Inches, Pt, RGBColor
 log = logging.getLogger("会议记录")
 
 # ---- 钉钉「智能纪要」样例实测样式（2026-09-17 侦察，定版依据）----
-# 样例：C:\Users\三农网络\Desktop\智能纪要：电商多平台运营策略复盘讨论 2026年9月2日.docx
+# 样例：C:\Users\<用户>\Desktop\智能纪要：电商多平台运营策略复盘讨论 2026年9月2日.docx
 FONT_EAST = "等线"          # rFonts eastAsia（样例全篇）
 FONT_ASCII = "Arial"        # rFonts ascii/hAnsi/cs（样例全篇）
 H1_SIZE = 26                # sz=52：样例大标题「智能纪要：…」

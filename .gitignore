@@ -7,6 +7,8 @@ __pycache__/
 config.toml
 # 单实例登记文件（运行时产物；冻结态落在 exe 旁）
 会议记录.pid
+# 热词表（用户自己的词，首次运行自动创建示例词；不入库）
+hotwords.txt
 # PyInstaller 打包产物（会议记录.spec 为跟踪文件，保留）
 dist/
 build/
