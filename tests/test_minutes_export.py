@@ -64,5 +64,32 @@ class SaveMinutesPairTest(unittest.TestCase):
             self.assertEqual(os.path.basename(base), "会议纪要_20260902_1200_2")
 
 
+class SaveMinutesDocxTest(unittest.TestCase):
+    """save_minutes_docx 与 _next_base_name 同一口径（C2-4③）。"""
+
+    def _save(self, tmp, stamp):
+        with mock.patch.object(docx_writer.time, "strftime", return_value=stamp):
+            return docx_writer.save_minutes_docx(_MD, tmp)
+
+    def test_skips_docx_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stamp = "20260902_1400"
+            with open(os.path.join(tmp, f"会议纪要_{stamp}.docx"), "wb") as f:
+                f.write(b"placeholder")
+            path = self._save(tmp, stamp)
+            self.assertEqual(os.path.basename(path), "会议纪要_20260902_1400_2.docx")
+            self.assertTrue(os.path.exists(path))
+
+    def test_skips_md_conflict_too(self):
+        """md 占了基名也要跳过：旧实现只看 .docx，会与成对导出的序号口径打架。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            stamp = "20260902_1300"
+            with open(os.path.join(tmp, f"会议纪要_{stamp}.md"), "wb") as f:
+                f.write(b"placeholder")
+            path = self._save(tmp, stamp)
+            self.assertEqual(os.path.basename(path), "会议纪要_20260902_1300_2.docx")
+            self.assertTrue(os.path.exists(path))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

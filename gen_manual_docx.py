@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """把 使用说明书.md 渲染成排版受控的 使用说明书.docx。
 
-排版规则：A4 / 边距 2.5cm；正文微软雅黑 11pt、1.5 倍行距、
+排版定版（2026-09-03，用户确认）：A4 / 边距 2.5cm；正文微软雅黑 11pt、1.5 倍行距、
 段后 6pt；标题三级全部黑色加粗（不用 Word 内置 Heading 样式，避免默认蓝绿色）；
 列表用普通段落 + 缩进 + 手动编号；行内 `code` 与目录树代码块用 Consolas 等宽、
 东亚字体微软雅黑；粗体由 md 里的 ** 控制（已大幅削减）。
 
 用法：python gen_manual_docx.py [md路径] [docx输出路径]
-默认：使用说明书.md -> 使用说明书.docx（当前目录）
+默认：D:\\会议记录工具\\使用说明书.md -> D:\\会议记录工具\\使用说明书.docx
 """
 import re
 import sys
@@ -28,8 +28,8 @@ H2_SIZE = 14
 H3_SIZE = 12
 CODE_SIZE = 10.5
 
-DEFAULT_MD = "使用说明书.md"
-DEFAULT_OUT = "使用说明书.docx"
+DEFAULT_MD = r"D:\会议记录工具\使用说明书.md"
+DEFAULT_OUT = r"D:\会议记录工具\使用说明书.docx"
 
 
 def set_run_font(run, ascii_font, east_font, size, bold, color):
@@ -80,11 +80,22 @@ def add_inline(p, text, size=BODY_SIZE, base_bold=False):
 
 
 def set_shading(p, fill="F2F2F2"):
+    """段落底纹（代码块用）。
+
+    OOXML 的 CT_PPr 里 `w:shd` 必须排在 `w:spacing` / `w:ind` **之前**（同仓库
+    docx_writer._set_cell_shading 处理的是同类顺序问题），无条件 append 会写出
+    不合 schema 的 pPr（WPS/Word 可能直接忽略底纹）。
+    """
     pPr = p._element.get_or_add_pPr()
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"), fill)
+    for tag in ("w:spacing", "w:ind"):
+        anchor = pPr.find(qn(tag))
+        if anchor is not None:
+            anchor.addprevious(shd)
+            return
     pPr.append(shd)
 
 

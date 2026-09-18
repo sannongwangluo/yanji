@@ -5,6 +5,8 @@ __pycache__/
 录音/
 日志/
 config.toml
+# 单实例登记文件（运行时产物；冻结态落在 exe 旁）
+会议记录.pid
 # PyInstaller 打包产物（会议记录.spec 为跟踪文件，保留）
 dist/
 build/

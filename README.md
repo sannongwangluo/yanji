@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/sannongwangluo/yanji)](https://github.com/sannongwangluo/yanji/releases/latest) [![Downloads](https://img.shields.io/github/downloads/sannongwangluo/yanji/total)](https://github.com/sannongwangluo/yanji/releases) [![Windows](https://img.shields.io/badge/platform-Windows-blue)](https://github.com/sannongwangluo/yanji) [![CI](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml/badge.svg)](https://github.com/sannongwangluo/yanji/actions/workflows/ci.yml)
 
-A Windows desktop tool for Chinese-language meetings: **live transcription with speaker labels while the meeting runs, and one-click minutes exported as Word + Markdown when it ends**.
+A Windows desktop tool for Chinese-language meetings: **live transcription with speaker labels while the meeting runs, and one-click minutes exported as Word + Markdown when it ends** — plus an auto-generated summary infographic and an optional PDF.
 
 **[Download YanJi.exe for Windows →](https://github.com/sannongwangluo/yanji/releases/latest)**
 
@@ -16,7 +16,7 @@ Main window (scrolling live transcript + microphone level meter):
 
 ![Main window](docs/images/main-window.png)
 
-Settings window (fill in or change the Volcano Speech and DeepSeek API keys):
+Settings window (fill in or change the Volcano Speech and DeepSeek API keys, and edit the hotword list):
 
 ![Settings window](docs/images/settings.png)
 
@@ -24,24 +24,27 @@ Settings window (fill in or change the Volcano Speech and DeepSeek API keys):
 
 ```mermaid
 flowchart LR
-    A[Meeting starts<br/>attendees say 我是X] --> B[Streaming ASR + speaker labels<br/>Volcano 2.0 · 200 ms/packet · two-pass<br/>ssd + check-in mapping]
+    A[Meeting starts<br/>attendees say 我是X] --> B[Streaming ASR + speaker labels<br/>Volcano 2.0 · 200 ms/packet · two-pass<br/>ssd + check-in mapping + hotwords]
     B --> C[Meeting ends]
-    C --> D[DeepSeek minutes<br/>deepseek-v4-flash]
-    D --> E[docx + md<br/>paired export]
+    C --> D[DeepSeek minutes<br/>deepseek-flash<br/>+ rolling digest for long meetings]
+    D --> E[docx + md<br/>summary infographic<br/>optional PDF]
 ```
 
 ## Features
 
 - **Real-time transcription**: Volcano Doubao LLM streaming speech recognition 2.0 (duration edition) over a bidirectional WebSocket, uploading 200 ms audio packets in real time; `enable_nonstream` two-pass recognition shows each speaker's words live in the main window
 - **Who said what**: Volcano `ssd` speaker diarization plus "check-in mapping" — each attendee says "I'm + name" at the start to bind a name (no voiceprint needed); unattributed speakers show as "Speaker N"
+- **Hotwords**: a plain-text `hotwords.txt` (one word per line, editable in the GUI) is sent as a streaming-recognition corpus hint and used as a spelling whitelist when generating the minutes, so names and jargon come out with the right characters; a token-estimate guard blocks over-long lists before the server can reject the whole recognition request
 - **Network-proof**: exponential-backoff auto-reconnect (up to 5 attempts); every utterance is appended to `日志/transcript_*.jsonl` in real time, so a crash loses at most a line or two
-- **Output**: DeepSeek organizes the transcript by speaker turns into a docx with three-level formatting (heading / body / list), exported as a matched docx + md pair
+- **Long meetings**: for meetings of 30 minutes or more, a rolling digest is written every 20 minutes in the background; at the end only the transcript after the digest is sent to the model, so the minutes come out faster without losing content (each digest is also saved to `日志/digest_*.md` as a crash-recovery copy)
+- **Output**: DeepSeek organizes the transcript by speaker turns into a docx with three-level formatting (heading / body / list), exported as a matched docx + md pair; a Pillow-drawn **summary infographic** PNG is generated and embedded into both, and an optional **PDF** is exported through the local WPS/Word (skipped silently if neither is installed)
+- **Single instance**: double-clicking again brings the existing window to the front instead of opening a second copy; a leftover zombie process from a crash is reclaimed safely
 
 ## Quick start
 
 1. Launch the app and click **Start recording** (phone, omnidirectional mic, or laptop mic all work)
 2. Hold the meeting. **At the start, each attendee says "I'm + name" once**, e.g. "我是张三" — the window scrolls live lines like `张三：……`
-3. Click **Finish & generate minutes** when the meeting ends: the transcript is already collected in real time and goes straight to DeepSeek, usually producing the docx in a minute or two and opening the output folder
+3. Click **Finish & generate minutes** when the meeting ends: the transcript is already collected in real time and goes straight to DeepSeek, usually producing the docx in a minute or two and opening the output folder (Word + Markdown + summary infographic, plus a PDF when WPS/Word is installed)
 
 > The status bar shows "streaming connected / N utterances recognized". Recognition is real-time, so after the meeting you only wait for the minutes generation, not for recognition.
 
@@ -61,6 +64,10 @@ The app needs two things, both configured in `config.toml` (copy `config.example
 1. Sign up on the DeepSeek platform and top up a small amount (a few yuan lasts a long time)
 2. Create an API key and put it in `config.toml` under `[deepseek]`: `api_key` (or set the `DEEPSEEK_API_KEY` environment variable)
 
+### Step 3 (optional): hotwords
+
+Names, product names and jargon that speech recognition keeps mis-hearing go into `hotwords.txt` (one word per line), edited in the GUI **Settings…** window. The list is sent as a streaming-recognition hint and used as a spelling whitelist for the minutes. Keep it short — the service accepts only a limited list, and the app refuses to save one that is too long.
+
 Restart, click "Start recording" → say something → "Finish & generate minutes"; if a document comes out, you're all set.
 
 ## Running
@@ -68,6 +75,13 @@ Restart, click "Start recording" → say something → "Finish & generate minute
 ```bash
 python yanji.py           # English entry point (equivalent to the Chinese one below)
 python 会议记录.py        # Chinese entry point
+```
+
+Dependencies: install from `requirements.txt` (Python 3.11+; `pywin32` and `Pillow` are the optional extras for PDF export and the summary infographic).
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
 CLI verification / fallback path:
@@ -80,8 +94,27 @@ python pipeline.py <wav>                     # file-recognition path (fallback)
 Run the tests:
 
 ```bash
-python -m unittest discover -s tests         # 54 test cases
+python -m unittest discover -s tests         # 351 test cases
 ```
+
+## Project structure
+
+| File | Role |
+| --- | --- |
+| `会议记录.py` / `yanji.py` | GUI entry point (Chinese / English launcher) |
+| `pipeline.py` | orchestration: mapping → minutes → docx/md/PDF |
+| `streaming_asr.py` | streaming recognition session (WebSocket, reconnect, hotwords) |
+| `asr_client.py` | fallback file-recognition path (TOS upload + polling) |
+| `speaker_map.py` | "I'm X" check-in → speaker-name mapping |
+| `minutes_llm.py` | DeepSeek minutes + rolling-digest prompts |
+| `digest.py` | long-meeting rolling digest state machine |
+| `hotwords.py` | `hotwords.txt` read/write + token-limit guard |
+| `infographic.py` | summary infographic rendering (Pillow) |
+| `docx_writer.py` | docx/md export + infographic embed + docx→PDF |
+| `recorder.py` | microphone capture (sounddevice) |
+| `config_loader.py` | `config.toml` read/write |
+| `gen_manual_docx.py` | manual-format docx helpers |
+| `tests/` | unit tests |
 
 ## Fallback path: file recognition (--file-mode)
 
@@ -99,6 +132,7 @@ This path needs the extra `[tos]` section (IAM keys + bucket). The default strea
 2. **Label drift**: speaker labels may drift after a reconnect (each reconnect is a new diarization session; double-check names in Word afterward)
 3. **Windows only**: this tool targets the Windows desktop
 4. **Pay-as-you-go**: both the Volcano speech recognition and DeepSeek APIs are billed by usage
+5. **Optional extras are best-effort**: the summary infographic needs the Microsoft YaHei font, and PDF export needs WPS or Word installed; when either is missing it is skipped and the docx/md export is unaffected
 
 ## Why the cloud (vs local solutions)
 
@@ -112,7 +146,7 @@ Doubao's own desktop app ships a free "meeting record" feature built on the same
 
 - **Named speakers**: attendees check in with "我是X" and every line is attributed — Doubao's transcript can't tell who said what
 - **Formatted docx deliverable** the moment the meeting ends, not text inside an app
-- **Your data stays on your disk**: audio, transcripts and minutes live locally; only API calls leave the machine — not stored in a consumer cloud account
+- **Your data stays on your disk**: audio, transcripts, minutes and the hotword list live locally; only API calls leave the machine — not stored in a consumer cloud account
 - **Open source**: customize the minutes prompt, inject industry hotwords, integrate with your own systems
 
 ## Privacy (please read)
@@ -127,12 +161,16 @@ Doubao's own desktop app ships a free "meeting record" feature built on the same
 
 - Speech recognition and polishing are both pay-per-use; see the consoles for current pricing
 - Minutes generation (DeepSeek): a few cents per meeting
+- The summary infographic and PDF export run entirely on your machine and add no API cost
 - Total: about **¥1 for a one-hour meeting** (both billed by usage)
 
 ## FAQ
 
 **Q: Who is "Speaker 3" in the minutes?**
 A: That attendee's "I'm XX" check-in wasn't heard clearly. Find the recording in `录音` or just edit "Speaker 3" to the real name in Word. Next time, have them check in clearly and closer to the mic.
+
+**Q: A name keeps coming out with the wrong characters?**
+A: Add it to the hotword list — GUI **Settings…** → hotwords → save, or edit `hotwords.txt` (one word per line). The same list is used both as a streaming-recognition hint and as a spelling whitelist for the minutes. Keep only the few words that are most often mis-heard.
 
 **Q: The status bar shows "connection interrupted, reconnecting…"?**
 A: The network hiccuped; the app reconnects automatically (up to 5 attempts with exponential backoff). Transcription resumes after a successful reconnect, but note that speaker labels may drift — verify names in Word afterward. If it never reconnects, recording continues unaffected; use the fallback path to produce the transcript later.
@@ -147,13 +185,12 @@ A: This is only needed for the **fallback file path**. Go to https://console.vol
 A: The bucket policy isn't set up. Add a "folder read/write" policy (both read **and** write).
 
 **Q: Where did my minutes go?**
-A: In the `输出` folder next to the app, named `会议纪要_YYYYMMDD_HHMM.docx`.
+A: In the `输出` folder next to the app, named `会议纪要_YYYYMMDD_HHMM.docx` (with a matched `.md` and a `_总结图.png`). If WPS or Word is installed, a matching `.pdf` is produced too.
 
 ## Roadmap
 
-- **CI auto-packaging** — `YanJi.exe` is built automatically on every release tag (added in this change)
 - **v2 local privacy engine** — SenseVoice on-device recognition: whole-audio recognition first, speaker diarization after
-- **More export formats** — Markdown and other formats
+- **More export formats** — PDF export through the local WPS/Word is now built in; other formats to follow
 
 ## License
 

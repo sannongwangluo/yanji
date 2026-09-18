@@ -8,7 +8,7 @@
 # 环境变量兜底：VOLC_API_KEY / VOLCENGINE_API_KEY
 # GUI「设置…」里也可改（改动写回这里）。
 api_key = ""
-# 资源 ID：豆包录音文件识别模型 2.0（标准版）。仅 --file-mode 备用路径用，一般不用改。
+# 资源 ID：豆包录音文件识别模型 2.0（标准版）。仅文件识别备用路径用，一般不用改。
 resource_id = "volc.seedasr.auc"
 
 [streaming]
@@ -24,7 +24,7 @@ chunk_ms = 200             # 每包音频毫秒数
 reconnect_max = 5          # 断线自动重连最大次数（指数退避）
 
 [tos]
-# 火山对象存储 TOS —— 仅「--file-mode 备用路径」需要，默认流式识别用不到，可全部留空。
+# 火山对象存储 TOS —— 仅「文件识别备用路径」需要，默认流式识别用不到，可全部留空。
 # 环境变量兜底：VOLCENGINE_ACCESS_KEY_ID / VOLCENGINE_SECRET_ACCESS_KEY
 #               / VOLCENGINE_TOS_BUCKET / VOLCENGINE_TOS_REGION
 access_key_id = ""     # IAM 访问密钥 ID（AKLT 开头）
@@ -37,7 +37,8 @@ endpoint = ""          # 留空则按 region 自动生成（tos-<region>.volces.
 # DeepSeek 用于生成会议纪要。环境变量兜底：DEEPSEEK_API_KEY
 # GUI「设置…」里也可改（改动写回这里）。
 api_key = ""
-model = "deepseek-v4-flash"
+# 模型 ID：deepseek-flash = DeepSeek V4.1 Flash 的正式 ID，一般不用改。
+model = "deepseek-flash"
 endpoint = "https://api.deepseek.com/v1/chat/completions"
 
 [asr]

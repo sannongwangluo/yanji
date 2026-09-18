@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import tomllib
+import uuid
 
 
 def app_base_dir():
@@ -64,8 +65,18 @@ def load_config(config_path=None):
     if os.path.exists(path):
         try:
             with open(path, "rb") as f:
-                toml_cfg = tomllib.load(f)
-        except (OSError, tomllib.TOMLDecodeError) as e:
+                raw = f.read()
+        except OSError as e:
+            raise ConfigError(f"读 config.toml 失败：{e}") from e
+        # utf-8-sig：记事本另存过的文件可能带 BOM，tomllib 直接读会报非法字符
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as e:
+            raise ConfigError(
+                "config.toml 不是 UTF-8 编码，请用记事本另存为 UTF-8 后重试。") from e
+        try:
+            toml_cfg = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
             raise ConfigError(f"读 config.toml 失败：{e}") from e
 
     def table(name):
@@ -85,7 +96,7 @@ def load_config(config_path=None):
             "api_key": _first(volc.get("api_key"),
                               os.environ.get("VOLC_API_KEY"),
                               os.environ.get("VOLCENGINE_API_KEY")),
-            # 资源 ID：豆包录音文件识别模型 2.0（标准版，非闲时）——仅 --file-mode 用
+            # 资源 ID：豆包录音文件识别模型 2.0（标准版，非闲时）——仅文件识别备用路径用
             "resource_id": _first(volc.get("resource_id"), "volc.seedasr.auc"),
         },
         "streaming": {
@@ -116,7 +127,7 @@ def load_config(config_path=None):
         },
         "deepseek": {
             "api_key": _first(ds.get("api_key"), os.environ.get("DEEPSEEK_API_KEY")),
-            "model": _first(ds.get("model"), "deepseek-v4-flash"),
+            "model": _first(ds.get("model"), "deepseek-flash"),
             "endpoint": _first(ds.get("endpoint"),
                                "https://api.deepseek.com/v1/chat/completions"),
         },
@@ -148,46 +159,107 @@ def _toml_str(value):
     return f"'{value}'"
 
 
+_TOML_SECTION_RE = re.compile(r"^\s*\[\s*([^\[\]]+?)\s*\]\s*(?:#.*)?$")
+
+
+def _toml_section_match(line):
+    """行是不是节标题（[volc] 这种）；是则返回节名。
+
+    容错匹配：允许方括号内有空白、行尾带注释（[volc]  # 注释）。用户手改过
+    config.toml 时，精确匹配找不到节就会在文件末尾再追加一个同名节，
+    下次启动 tomllib 直接报重复节 → 程序起不来。
+    """
+    m = _TOML_SECTION_RE.match(line)
+    return m.group(1).strip() if m else None
+
+
+def _eol_of(line, default="\n"):
+    """行尾换行符原样带回（CRLF 的文件写回去还是 CRLF）。"""
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    return default
+
+
+def _file_eol(lines):
+    """文件主流的换行符（追加新内容时用）。"""
+    for line in lines:
+        if line.endswith("\r\n"):
+            return "\r\n"
+        if line.endswith("\n"):
+            return "\n"
+    return "\n"
+
+
+def _remove_quiet(path):
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _atomic_write_lines(config_path, lines):
+    """原子写回 config.toml：同目录临时文件 → tomllib 回读校验 → os.replace。
+
+    直接 open("w") 截断重写的话，写一半出错（磁盘满 / 进程被杀）就把用户的配置
+    弄坏了；回读校验放在 replace 之前，坏内容永远顶不掉好文件。
+    """
+    tmp = f"{config_path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.writelines(lines)
+        with open(tmp, "rb") as f:
+            tomllib.load(f)   # 写回的内容必须自己解析得了
+        os.replace(tmp, config_path)
+    except tomllib.TOMLDecodeError as e:
+        _remove_quiet(tmp)
+        raise OSError(f"写 config.toml 失败：回写的内容不是合法 TOML（{e}）") from e
+    except OSError as e:
+        _remove_quiet(tmp)
+        raise OSError(f"写 config.toml 失败：{e}") from e
+
+
 def save_config_value(section, key, value, config_path=CONFIG_PATH):
     """把 config.toml 某一节里的单个键值写回（tomllib 只读，手写"只动一行"）。
 
     - 已存在该 key 的行：整行替换（行尾原样保留）；
     - 节存在但没有该 key：插到节标题行之后；
     - 连节都没有：文件末尾追加节标题 + 该行（防御，正常 config 各节必有）。
-    值用 _toml_str 写成 TOML 字符串；只动目标一行，其余内容原样保留。
+    值用 _toml_str 写成 TOML 字符串；只动目标一行，其余内容（注释、CRLF）原样保留；
+    写回走 _atomic_write_lines（临时文件 + 校验 + os.replace）。
     config.toml 不存在/不可写时抛 OSError，由调用方（GUI）用中文提示。
     """
-    with open(config_path, "r", encoding="utf-8") as f:
+    # newline=""：不做换行翻译，CRLF 原样读进来、原样写回去
+    with open(config_path, "r", encoding="utf-8-sig", newline="") as f:
         lines = f.readlines()
 
     section_title = f"[{section}]"
     sec_idx = next((i for i, l in enumerate(lines)
-                    if l.strip() == section_title), None)
+                    if _toml_section_match(l) == section), None)
     key_re = re.compile(rf"^{re.escape(key)}\s*=")
     key_idx = None
     if sec_idx is not None:
         for i in range(sec_idx + 1, len(lines)):
-            stripped = lines[i].strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
+            if _toml_section_match(lines[i]) is not None:
                 break  # 已到下一个节，本节里没有该 key
-            if key_re.match(stripped):
+            if key_re.match(lines[i].strip()):
                 key_idx = i
                 break
 
     new_line = f"{key} = {_toml_str(value)}"
     if key_idx is not None:
-        eol = "\r\n" if lines[key_idx].endswith("\r\n") else "\n"
-        lines[key_idx] = new_line + eol
+        lines[key_idx] = new_line + _eol_of(lines[key_idx])
     elif sec_idx is not None:
-        eol = "\r\n" if lines[sec_idx].endswith("\r\n") else "\n"
-        lines.insert(sec_idx + 1, new_line + eol)
+        lines.insert(sec_idx + 1, new_line + _eol_of(lines[sec_idx]))
     else:
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.extend([f"{section_title}\n", new_line + "\n"])
+        eol = _file_eol(lines)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines.append(eol)
+        lines.extend([f"{section_title}{eol}", new_line + eol])
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+    _atomic_write_lines(config_path, lines)
 
 
 def save_output_dir(path, config_path=CONFIG_PATH):

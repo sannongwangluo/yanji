@@ -15,15 +15,18 @@
 - full client request 的 JSON：request 段 model_name="bigmodel"、
   enable_nonstream=true（二遍识别：实时逐字 + nostream 复核，definite=true 的分句
   才是准的）、enable_speaker_info=true、ssd_version="200"、enable_punc/enable_itn、
-  show_utterances=true、result_type="single"（增量返回）；
-- 音频 200ms 一包（16k s16le mono = 6400 字节/包），gzip 压缩；散会发负 seq 空包；
+  show_utterances=true、result_type="single"（增量返回）；有热词时另加
+  request.corpus.context（官方「热词直传」形态 {"hotwords":[{"word":"词"}]}，
+  双向流式额度 100 tokens，注入前按 hotwords.py 的估算截断，空表则不加该字段）；
+- 音频按 `[streaming] chunk_ms` 分包（默认 200ms，16k s16le mono = 6400 字节/包；
+  非法配置回落 200 并 warning），gzip 压缩；散会发负 seq 空包；
 - 服务端每包回 full server response，本模块只取 definite=true 的 utterance。
   说话人字段实测（2026-09-02）为 additions.speaker_id（字符串）；_speaker_of 仍
   兼容 speaker/speaker_id/spk/additions 多路以防版本差异。
 
-设计决策：
-- 网络层用 websockets 库（sync client）：默认不读系统代理 = 强制直连（避免
-  系统代理残留导致连接失败：代理内核停了但系统代理还开着时，读系统代理的库会
+设计决策（改前先读项目 AGENTS.md）：
+- 网络层用 websockets 库（sync client）：默认不读系统代理 = 强制直连（本机有
+  系统代理残留踩坑史：代理内核停了但系统代理还开着时，读系统代理的库会
   WinError 10061；火山域名国内直连即可）；
 - reader / sender 两个线程：reader 收响应 + 断线重连，sender 从音频缓冲队列
   取帧发送。feed() 只做字节转换 + 入队，绝不阻塞、绝不抛异常（它在 PortAudio
@@ -49,6 +52,7 @@ import uuid
 import numpy as np
 
 from config_loader import ConfigError, app_base_dir
+from hotwords import (HOTWORDS_MAX_TOKENS, clamp_hotwords, hotwords_tokens)
 
 log = logging.getLogger("会议记录")
 
@@ -78,10 +82,16 @@ DEFAULT_UID = "meeting-minutes"
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHUNK_MS = 200
 _CHUNK_BYTES = DEFAULT_SAMPLE_RATE * 2 * DEFAULT_CHUNK_MS // 1000   # 6400 字节/包
-_CHUNK_QUEUE_MAX = 50            # 音频缓冲兜底 50 包 ≈ 10 秒
+_CHUNK_MS_MIN = 20               # [streaming] chunk_ms 合法区间（挡配置手抖）
+_CHUNK_MS_MAX = 2000
+_CHUNK_QUEUE_MAX = 50            # 音频缓冲兜底 50 包（默认 200ms/包 ≈ 10 秒）
 
 # 空音频错误码（纯静音包服务端可能返回，非致命）
 _EMPTY_AUDIO_CODE = 45000002
+# 连续这么多个非致命错误帧（且中间没有正常数据帧）就认为这条连接已废
+_ERROR_FRAME_LIMIT = 3
+# finish() 抢发送锁的超时（sender 卡在 send 上时不许把收尾拖死）
+_FINISH_SEND_LOCK_TIMEOUT = 3.0
 
 DEFAULT_REQUEST = {
     "model_name": "bigmodel",
@@ -136,6 +146,18 @@ def build_full_request(seq, uid=DEFAULT_UID, sample_rate=DEFAULT_SAMPLE_RATE,
             + struct.pack(">i", seq)
             + struct.pack(">I", len(body))
             + body)
+
+
+def corpus_context(hotwords):
+    """热词 → request.corpus.context 的 JSON 字符串（官方「热词直传」形态）。
+
+    官方文档（大模型流式语音识别 API，request.corpus.context）：
+    `"context":"{\\"hotwords\\":[{\\"word\\":\\"热词1号\\"}]}"`，双向流式支持 100 tokens。
+    注意 `context_type`/`context_data` 那套是**对话上下文**（dialog_ctx）的形态，
+    不是热词——热词用这里的 hotwords 数组。
+    """
+    return json.dumps({"hotwords": [{"word": w} for w in hotwords]},
+                      ensure_ascii=False)
 
 
 def build_audio_request(seq, pcm, is_last):
@@ -219,6 +241,58 @@ def frame_to_pcm_bytes(frame_float32):
     return (a * 32767.0).astype("<i2").tobytes()
 
 
+def _prepare_hotwords(hotwords):
+    """建连前的热词防御（第二道保险）：None/空 → []；超 token 上限 → 截断 + warning。
+
+    保存入口（GUI）已经拦过一次超限，这里再拦一次是因为任何一条路径都不该把超限的
+    corpus.context 发给服务端——服务端会拒掉整次识别，表现是「录了一小时全是空的」。
+    """
+    words = [str(w).strip() for w in (hotwords or []) if str(w).strip()]
+    if not words:
+        return []
+    kept = clamp_hotwords(words)
+    if len(kept) < len(words):
+        log.warning("[热词] %d 个词约 %.0f tokens 超出上限 %d，本次只用前 %d 个：%s",
+                    len(words), hotwords_tokens(words), HOTWORDS_MAX_TOKENS,
+                    len(kept), "、".join(kept))
+    else:
+        log.info("[热词] 本次识别注入 %d 个热词（约 %.0f tokens）：%s",
+                 len(kept), hotwords_tokens(kept), "、".join(kept))
+    return kept
+
+
+def _valid_chunk_ms(value):
+    """`[streaming] chunk_ms` 归一：没配（None）→ 默认 200 静默；配了但不合法
+    （非整数 / 越界）→ 回落 200 并 warning 一次（会话构造时调一次，不逐包刷）。
+
+    包长写死 200ms 会让 config.toml 里的 chunk_ms 变成死配置——服务端对分包
+    时长有容忍区间，但配置读到了就必须照用。
+    """
+    if value is None:
+        return DEFAULT_CHUNK_MS        # 没配（config_loader 会兜底 200）→ 静默用默认
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        ms = None
+    if ms is not None and _CHUNK_MS_MIN <= ms <= _CHUNK_MS_MAX:
+        return ms
+    log.warning("[流式] config [streaming] chunk_ms=%r 不合法（应为 %d~%d 的整数），"
+                "本次按默认 %d ms 分包", value, _CHUNK_MS_MIN, _CHUNK_MS_MAX,
+                DEFAULT_CHUNK_MS)
+    return DEFAULT_CHUNK_MS
+
+
+def _as_start_time(value):
+    """start_time 取值归一：None / 非数字 / 负数 → None。
+
+    实测（2026-09-02）逐字 words 的 start_time 会用 -1 占位，也可能给 None；
+    直接拿去做 `>= 0` 比较会 TypeError，所以统一在这里收口。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if value >= 0 else None
+
+
 def _speaker_of(u):
     """utterance 的说话人标签。实测字段名：additions.speaker_id（2026-09-02），
     仍按 speaker/speaker_id/spk/additions.speaker/additions.speaker_id 顺序兼容；
@@ -238,15 +312,18 @@ def _speaker_of(u):
 
 def _start_time_of(u):
     """utterance 起时间。实测（2026-09-02）：流式 definite 句没有 utterance 级
-    start_time（只有 end_time + 逐字 words），从 words[0].start_time 推导（-1 跳过）。"""
-    st = u.get("start_time")
+    start_time（只有 end_time + 逐字 words），从 words[0].start_time 推导（-1/None 跳过）。"""
+    st = _as_start_time(u.get("start_time"))
     if st is not None:
         return st
     words = u.get("words")
     if isinstance(words, list):
         for w in words:
-            if isinstance(w, dict) and w.get("start_time", -1) >= 0:
-                return w["start_time"]
+            if not isinstance(w, dict):
+                continue
+            st = _as_start_time(w.get("start_time"))
+            if st is not None:
+                return st
     return None
 
 
@@ -270,7 +347,10 @@ def definite_utterances(data):
     for u in utts:
         if not isinstance(u, dict):
             continue
-        text = (u.get("text") or "").strip()
+        text = u.get("text")
+        if not isinstance(text, str):
+            continue          # 畸形帧（text 是 list/number 等）直接跳过这一句
+        text = text.strip()
         if not text:
             continue
         definite = u.get("definite")
@@ -321,22 +401,30 @@ class MeetingStreamSession:
     - 每个 definite 分句：追加写 jsonl + 回调 on_utterance(u)（在 reader 线程里）；
     - 断线重连：检测到断开即清空音频缓冲，再指数退避最多 reconnect_max 次；
       退避期间积累的音频（deque 上限 50 包 ≈10s）在重建后补发给新会话，
-      重发 full client request、seq 重新计数。
+      重发 full client request、seq 重新计数、清空去重集（新会话 start_time 可能重数）；
+    - 连续 3 个非「空音频」错误帧 = 连接已废，与断线走同一条重连路径；
+    - reader 线程对「recv 成功之后的解析/处理」有顶层兜底：畸形帧只丢这一帧，
+      绝不静默弄死 reader（死在 recv 之后界面还显示「已连接」，整场零转写）。
     """
 
-    def __init__(self, cfg, on_utterance=None, transcript_dir=None):
+    def __init__(self, cfg, on_utterance=None, transcript_dir=None, hotwords=None):
         self._volc = cfg["volc"]
         self._stream = cfg["streaming"]
         self._asr = cfg["asr"]
         self._on_utterance = on_utterance
         self._transcript_dir = transcript_dir  # None → 项目 日志/ 目录（测试可注入临时目录）
+        # 热词（开会建连时传入一次；None = 不带热词，request 里不加 corpus 字段）
+        self._hotwords = _prepare_hotwords(hotwords)
+        # 分包时长（config [streaming] chunk_ms；非法值回落 200 并 warning 一次）
+        self._chunk_ms = _valid_chunk_ms(self._stream.get("chunk_ms"))
+        self._chunk_bytes = DEFAULT_SAMPLE_RATE * 2 * self._chunk_ms // 1000
 
         self._ws = None
         self._reader = None
         self._sender = None
         self._cond = threading.Condition()
         self._audio_buf = collections.deque(maxlen=_CHUNK_QUEUE_MAX)
-        self._acc = []            # feed 累计余量（不足 200ms 的零头）
+        self._acc = []            # feed 累计余量（不足一包的零头）
         self._acc_n = 0
         self._seq = 0
         self._send_lock = threading.Lock()
@@ -346,6 +434,8 @@ class MeetingStreamSession:
         self._failed = False
         self._finishing = threading.Event()
         self._stop = threading.Event()
+        self._final_sent = threading.Event()   # 收尾包已发/已跳过 → sender 不许再发音频
+        self._error_frames = 0
         self._last_error = ""
 
         self._utterances = []
@@ -353,6 +443,8 @@ class MeetingStreamSession:
         self._utterance_frame_logged = False
         self._jsonl_path = None
         self._jsonl_file = None
+        self._jsonl_broken = False   # 落盘出过错（open 或 append）→ 之后静默计数
+        self._jsonl_lost = 0         # 没能写进 jsonl 的分句数（close 时汇总一条 warning）
 
     # ---- 状态（供 GUI 状态行轮询）----
     @property
@@ -419,10 +511,11 @@ class MeetingStreamSession:
         self._reader.start()
         self._sender.start()
         log.info("[流式] 已连接（resource=%s），实时转写落盘 %s",
-                 self._stream["resource_id"], self._jsonl_path)
+                 self._stream["resource_id"],
+                 self._jsonl_path or "（不可用：本次会议不落盘，识别继续）")
 
     def feed(self, frame_float32):
-        """喂一段 float32 音频（任意长度，录音回调线程调用）。攒够 200ms 才入队。"""
+        """喂一段 float32 音频（任意长度，录音回调线程调用）。攒够一包才入队。"""
         if self._stop.is_set() or self._finishing.is_set():
             return
         try:
@@ -431,12 +524,12 @@ class MeetingStreamSession:
                 return
             self._acc.append(pcm)
             self._acc_n += len(pcm)
-            if self._acc_n >= _CHUNK_BYTES:
+            if self._acc_n >= self._chunk_bytes:
                 data = b"".join(self._acc)
                 with self._cond:
-                    while len(data) >= _CHUNK_BYTES:
-                        self._audio_buf.append(data[:_CHUNK_BYTES])
-                        data = data[_CHUNK_BYTES:]
+                    while len(data) >= self._chunk_bytes:
+                        self._audio_buf.append(data[:self._chunk_bytes])
+                        data = data[self._chunk_bytes:]
                     self._acc = [data] if data else []
                     self._acc_n = len(data)
                     self._cond.notify()
@@ -446,6 +539,13 @@ class MeetingStreamSession:
     def finish(self):
         """散会收尾：等缓冲发完 → 发负 seq 空包 → 读收尾帧 → 关连关文件。不抛异常。"""
         if not self._started:
+            # 没启动就散会（start 还没跑 / 建连抛异常）：也必须置 _stop。
+            # 否则与在途建连竞态时，reader/sender 起来后没有任何东西叫停它们。
+            # 注意：已启动的正常收尾不许在这里置 _stop（要等 reader 收最后帧），
+            # 那条路径的 _stop 仍留在第 4 步。
+            self._stop.set()
+            with self._cond:
+                self._cond.notify_all()
             self._close_jsonl()
             return
         self._finishing.set()
@@ -454,14 +554,26 @@ class MeetingStreamSession:
         with self._cond:
             while self._audio_buf and time.monotonic() < deadline:
                 self._cond.wait(0.05)
-        # 2. 发最后一包（负 seq 空包），告诉服务端音频结束
-        try:
-            if self._connected and self._ws is not None:
-                with self._send_lock:
+        # 2. 发最后一包（负 seq 空包），告诉服务端音频结束。sender 可能卡在 send
+        #    上，所以抢发送锁带超时：拿不到就跳过收尾包（分句已逐句落盘，出稿不受
+        #    影响），绝不在收尾阶段无限等一个卡死的线程。
+        if self._send_lock.acquire(timeout=_FINISH_SEND_LOCK_TIMEOUT):
+            try:
+                if self._connected and self._ws is not None:
                     self._seq += 1
                     self._ws.send(build_audio_request(self._seq, b"", is_last=True))
-        except Exception as e:
-            log.warning("[流式] 发送收尾包失败（不影响已识别内容）：%s", e)
+            except Exception as e:
+                log.warning("[流式] 发送收尾包失败（不影响已识别内容）：%s", e)
+            finally:
+                self._send_lock.release()
+        else:
+            log.warning("[流式] 发送线程占着发送锁超过 %.0f 秒，跳过收尾包"
+                        "（已识别分句已逐句落盘）", _FINISH_SEND_LOCK_TIMEOUT)
+        # 收尾包之后不许 sender 再发正 seq 音频（200ms 包级竞态会让服务端在
+        # 「音频结束」之后又收到音频）
+        self._final_sent.set()
+        with self._cond:
+            self._cond.notify_all()
         # 3. 等 reader 读到收尾帧退出（服务端会回最后一帧）
         if self._reader is not None:
             self._reader.join(timeout=12)
@@ -489,8 +601,8 @@ class MeetingStreamSession:
                 "（或设置环境变量 VOLC_API_KEY）。")
 
     def _request_params(self):
-        """流式 full request 的 request 段参数（二遍识别 + 说话人分离 ssd200）。"""
-        return {
+        """流式 full request 的 request 段参数（二遍识别 + 说话人分离 ssd200 + 热词）。"""
+        params = {
             "model_name": self._stream["model_name"],
             "language": self._asr["language"],
             "enable_nonstream": self._stream["enable_nonstream"],
@@ -501,6 +613,9 @@ class MeetingStreamSession:
             "show_utterances": self._asr["show_utterances"],
             "result_type": "single",
         }
+        if self._hotwords:  # 热词为空就不加 corpus 字段（保持原请求形态）
+            params["corpus"] = {"context": corpus_context(self._hotwords)}
+        return params
 
     def _connect(self):
         """建连并发送 full client request（每次连接 seq 重新从 1 起）。阻塞。"""
@@ -563,32 +678,52 @@ class MeetingStreamSession:
             last_frame = time.monotonic()
             if isinstance(frame, str):
                 continue  # 忽略文本帧
-            resp = parse_response(frame)
-            if resp is None:
+            # recv 成功之后的解析/处理必须有顶层兜底：畸形帧（payload 不是 dict、
+            # text 不是字符串…）只许丢这一帧。这里抛出去会静默弄死 reader 线程，
+            # 界面还显示「已连接」，整场零转写。
+            try:
+                resp = parse_response(frame)
+                if resp is None:
+                    continue
+                if resp["code"] != 0:
+                    if resp["code"] == _EMPTY_AUDIO_CODE:
+                        log.debug("[流式] 空音频提示 %d（正常）", resp["code"])
+                        continue
+                    self._error_frames += 1
+                    log.warning("[流式] 服务端错误码 %d（连续第 %d 次）：%r",
+                                resp["code"], self._error_frames, resp["data"])
+                    if self._error_frames >= _ERROR_FRAME_LIMIT:
+                        # 连续错误帧 = 这条连接已废（只 warning 的话 reader 空转、
+                        # 界面没有任何信号）→ 与断线走同一条重连路径
+                        log.error("[流式] 连续 %d 个错误帧，按连接失效处理，开始重连",
+                                  self._error_frames)
+                        self._error_frames = 0
+                        if not self._reconnect():
+                            break
+                    continue
+                self._error_frames = 0    # 收到正常数据帧 → 连续错误计数清零
+                is_last = resp["is_last"]
+                if resp["data"]:
+                    is_last = self._handle_data(resp["data"]) or is_last
+                if is_last:
+                    if self._finishing.is_set():
+                        break
+                    # 服务端主动发收尾帧但会议还没散 → 连接被掐，重连
+                    if not self._reconnect():
+                        break
+            except Exception:
+                log.exception("[流式] 处理服务端帧异常，跳过该帧（reader 继续）")
                 continue
-            if resp["code"] != 0:
-                if resp["code"] == _EMPTY_AUDIO_CODE:
-                    log.debug("[流式] 空音频提示 %d（正常）", resp["code"])
-                else:
-                    log.warning("[流式] 服务端错误码 %d：%r", resp["code"], resp["data"])
-                continue
-            is_last = resp["is_last"]
-            if resp["data"]:
-                is_last = self._handle_data(resp["data"]) or is_last
-            if is_last:
-                if self._finishing.is_set():
-                    break
-                # 服务端主动发收尾帧但会议还没散 → 连接被掐，重连
-                if not self._reconnect():
-                    break
 
     def _sender_loop(self):
         while not self._stop.is_set():
             with self._cond:
                 while (not self._audio_buf or not self._connected) \
-                        and not self._stop.is_set():
+                        and not self._stop.is_set() and not self._final_sent.is_set():
                     self._cond.wait(0.2)
-                if self._stop.is_set():
+                if self._stop.is_set() or self._final_sent.is_set():
+                    if self._final_sent.is_set():
+                        self._audio_buf.clear()   # 收尾包已发，剩余缓冲丢掉
                     break
                 pcm = self._audio_buf.popleft()
             try:
@@ -624,6 +759,9 @@ class MeetingStreamSession:
                 log.warning("[流式] 第 %d 次重连失败：%s", attempt, e)
                 delay = min(delay * 2, 16.0)
                 continue
+            # 新连接 = 新识别会话：start_time 可能从 0 重数，旧的去重键会跟新分句
+            # 撞车（新句被当重复丢掉）。新会话不会重发旧分句，清空是安全的。
+            self._seen.clear()
             log.warning("[流式] 连接已重建，说话人标签可能漂移（新会话的 ssd 标签可能复用旧编号）")
             self._set_connected(True)
             return True
@@ -635,6 +773,10 @@ class MeetingStreamSession:
     # ---- 响应处理 / 落盘 ----
     def _handle_data(self, data):
         """解析一帧 full response：抽 definite 分句 → 落盘 → 回调。返回 JSON 层收尾标志。"""
+        if not isinstance(data, dict):
+            log.warning("[流式] full response 的 payload 不是 JSON 对象（%s），跳过该帧",
+                        type(data).__name__)
+            return False
         raw_utts = definite_utterances(data)
         if raw_utts and not self._utterance_frame_logged:
             self._utterance_frame_logged = True
@@ -656,20 +798,37 @@ class MeetingStreamSession:
         return bool(data.get("is_last_package"))
 
     def _open_jsonl(self):
+        """打开逐句落盘文件。落盘是外围能力：失败只 warning，绝不许掐掉识别主路径。"""
         log_dir = self._transcript_dir or os.path.join(BASE_DIR, "日志")
-        os.makedirs(log_dir, exist_ok=True)
-        self._jsonl_path = os.path.join(
-            log_dir, time.strftime("transcript_%Y%m%d_%H%M.jsonl"))
-        self._jsonl_file = open(self._jsonl_path, "a", encoding="utf-8")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            self._jsonl_path = os.path.join(
+                log_dir, time.strftime("transcript_%Y%m%d_%H%M.jsonl"))
+            self._jsonl_file = open(self._jsonl_path, "a", encoding="utf-8")
+        except Exception:
+            self._jsonl_path = None
+            self._jsonl_file = None
+            self._jsonl_broken = True   # 之后的分句走静默计数，close 时汇总一条
+            log.warning("[流式] 转写落盘不可用（目录 %s），本次会议不落盘，识别继续",
+                        log_dir, exc_info=True)
 
     def _append_jsonl(self, u):
         if self._jsonl_file is None:
+            if self._jsonl_broken:
+                self._jsonl_lost += 1   # 已经报过错：之后静默计数，close 时汇总
             return
         try:
             self._jsonl_file.write(json.dumps(u, ensure_ascii=False) + "\n")
             self._jsonl_file.flush()
         except Exception:
-            log.exception("[流式] 转写落盘失败（识别继续）")
+            self._jsonl_broken = True
+            self._jsonl_lost += 1
+            log.exception("[流式] 转写落盘失败，本次会议不再落盘（识别继续）")
+            try:
+                self._jsonl_file.close()
+            except Exception:
+                pass
+            self._jsonl_file = None
 
     def _close_jsonl(self):
         if self._jsonl_file is not None:
@@ -678,3 +837,7 @@ class MeetingStreamSession:
             except Exception:
                 pass
             self._jsonl_file = None
+        if self._jsonl_lost:
+            log.warning("[流式] 本次会议有 %d 句没能落盘（%s），识别内容仍在内存与纪要里",
+                        self._jsonl_lost, self._jsonl_path or "jsonl 不可用")
+            self._jsonl_lost = 0        # 幂等：重复 close 不重复汇总

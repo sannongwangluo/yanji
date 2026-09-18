@@ -6,10 +6,13 @@ save_output_dir 写回后可再读出；另覆盖泛化 save_config_value（全�
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config_loader
 from config_loader import load_config, save_config_value, save_output_dir
 from pipeline import _out_dir
 
@@ -112,11 +115,11 @@ class SaveConfigValueTest(unittest.TestCase):
         """② 节存在但没有该 key → 插到节标题之后。"""
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.toml")
-            self._write(cfg_path, "[deepseek]\nmodel = \"deepseek-v4-flash\"\n")
+            self._write(cfg_path, "[deepseek]\nmodel = \"deepseek-flash\"\n")
             save_config_value("deepseek", "api_key", "sk-test-123", config_path=cfg_path)
             cfg = load_config(cfg_path)
             self.assertEqual(cfg["deepseek"]["api_key"], "sk-test-123")
-            self.assertEqual(cfg["deepseek"]["model"], "deepseek-v4-flash")
+            self.assertEqual(cfg["deepseek"]["model"], "deepseek-flash")
 
     def test_append_section_when_missing(self):
         """节都没有 → 文末追加节标题 + 该行，仍可读回。"""
@@ -136,6 +139,116 @@ class SaveConfigValueTest(unittest.TestCase):
             weird = "sk-'a\"b\\c'"
             save_config_value("volc", "api_key", weird, config_path=cfg_path)
             self.assertEqual(load_config(cfg_path)["volc"]["api_key"], weird)
+
+
+class SaveConfigAtomicityTest(unittest.TestCase):
+    """B5：节头容错匹配（行尾注释/空白也算同一节）+ 原子写回 + CRLF 保留。"""
+
+    def _write(self, cfg_path, text, newline=""):
+        with open(cfg_path, "w", encoding="utf-8", newline=newline) as f:
+            f.write(text)
+
+    def test_tolerant_section_header_inserts_in_place(self):
+        """节标题带行尾注释时也在原节里插入，不在文件末尾追加第二个 [volc]。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[volc]  # 豆包语音，改前先备份\n"
+                                  "resource_id = 'volc.seedasr.auc'\n\n"
+                                  "[deepseek]\nmodel = 'deepseek-flash'\n")
+            save_config_value("volc", "api_key", "new-uuid", config_path=cfg_path)
+            with open(cfg_path, encoding="utf-8") as f:
+                text = f.read()
+            self.assertEqual(text.count("[volc]"), 1)
+            self.assertIn("# 豆包语音，改前先备份", text)   # 行尾注释原样保留
+            cfg = load_config(cfg_path)
+            self.assertEqual(cfg["volc"]["api_key"], "new-uuid")
+            self.assertEqual(cfg["volc"]["resource_id"], "volc.seedasr.auc")
+            self.assertEqual(cfg["deepseek"]["model"], "deepseek-flash")
+
+    def test_key_search_stops_at_commented_section_header(self):
+        """下一个节标题带行尾注释时也要认出来，不能把别节的键当成自己节的。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[volc]\nresource_id = 'volc.seedasr.auc'\n\n"
+                                  "[deepseek]  # 纪要模型\napi_key = 'sk-old'\n")
+            save_config_value("volc", "api_key", "uuid-1", config_path=cfg_path)
+            cfg = load_config(cfg_path)
+            self.assertEqual(cfg["volc"]["api_key"], "uuid-1")
+            self.assertEqual(cfg["deepseek"]["api_key"], "sk-old")
+
+    def test_written_file_is_parseable_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[app]\noutput_dir = ''\n")
+            save_config_value("app", "output_dir", r"D:\纪要", config_path=cfg_path)
+            with open(cfg_path, "rb") as f:
+                tomllib.load(f)          # 写完必须自己解析得了
+
+    def test_write_goes_through_temp_file_and_replace(self):
+        """原子写：同目录临时文件 + os.replace（直接 open("w") 截断重写会写坏配置）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path, "[app]\noutput_dir = ''\n")
+            real_replace = os.replace
+            calls = []
+
+            def fake_replace(src, dst):
+                calls.append((src, dst))
+                real_replace(src, dst)
+
+            with mock.patch.object(config_loader.os, "replace",
+                                   side_effect=fake_replace):
+                save_config_value("app", "output_dir", r"D:\纪要",
+                                  config_path=cfg_path)
+            self.assertEqual(len(calls), 1)
+            src, dst = calls[0]
+            self.assertEqual(dst, cfg_path)
+            self.assertNotEqual(src, cfg_path)
+            self.assertTrue(src.endswith(".tmp"))
+            self.assertEqual(os.path.dirname(src), tmp)
+            self.assertFalse(os.path.exists(src))
+            self.assertEqual(load_config(cfg_path)["app"]["output_dir"], r"D:\纪要")
+
+    def test_crlf_is_preserved(self):
+        """CRLF 的 config.toml 写回后仍是纯 CRLF（不混进裸 LF）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            self._write(cfg_path,
+                        "[app]\r\noutput_dir = ''\r\n\r\n[x]\r\na = 1\r\n")
+            save_config_value("app", "output_dir", r"D:\纪要", config_path=cfg_path)
+            with open(cfg_path, "rb") as f:
+                text = f.read().decode("utf-8")
+            self.assertIn("output_dir = 'D:\\纪要'\r\n", text)
+            self.assertEqual(text.count("\n"), text.count("\r\n"))   # 没有裸 LF
+
+
+class ConfigEncodingTest(unittest.TestCase):
+    """B10：编码口径统一成 ConfigError（中文提示），带 BOM 的能读。"""
+
+    def test_gbk_config_raises_config_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            with open(cfg_path, "wb") as f:
+                f.write("[app]\noutput_dir = 'D:\\纪要'\n".encode("gbk"))
+            with self.assertRaises(config_loader.ConfigError) as cm:
+                load_config(cfg_path)
+            self.assertIn("UTF-8", str(cm.exception))
+
+    def test_utf8_bom_is_tolerated(self):
+        """记事本另存为 UTF-8 会带 BOM：不能因为 BOM 就报「读 config.toml 失败」。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            with open(cfg_path, "w", encoding="utf-8-sig") as f:
+                f.write("[app]\noutput_dir = 'D:\\纪要'\n")
+            self.assertEqual(load_config(cfg_path)["app"]["output_dir"], "D:\\纪要")
+
+    def test_save_on_bom_file_reads_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.toml")
+            with open(cfg_path, "w", encoding="utf-8-sig") as f:
+                f.write("[app]\noutput_dir = ''\n")
+            save_output_dir(r"D:\纪要", config_path=cfg_path)
+            self.assertEqual(load_config(cfg_path)["app"]["output_dir"], r"D:\纪要")
 
 
 if __name__ == "__main__":

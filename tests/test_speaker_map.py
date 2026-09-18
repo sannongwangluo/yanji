@@ -65,6 +65,53 @@ class SpeakerMapTest(unittest.TestCase):
         self.assertEqual(_display_name(None), "说话人?")
 
 
+class CheckinBoundaryTest(unittest.TestCase):
+    """B7 回归：报到候选必须真的像人名。
+
+    原来 `我(?:是|叫)\\s*([一-龥A-Za-z]{2,8})` 无边界，「我是同意的」会被记成
+    「同意的」，而且首现即定不覆盖 → 整场纪要的人名都是错的。
+    """
+
+    def _map(self, text):
+        mapping, _ = _map_speakers([{"speaker": "1", "text": text}])
+        return mapping
+
+    def test_sentence_not_taken_as_name(self):
+        for text in ("我是同意的", "我是说今天先复盘", "我是负责这一块的"):
+            self.assertEqual(self._map(text), {}, text)
+
+    def test_real_checkins_still_mapped(self):
+        self.assertEqual(self._map("我是老王"), {"1": "老王"})
+        self.assertEqual(self._map("大家好，我是张三"), {"1": "张三"})
+        self.assertEqual(self._map("我叫欧阳锋"), {"1": "欧阳锋"})
+
+    def test_single_char_not_mapped(self):
+        self.assertEqual(self._map("我是王"), {})
+
+    def test_name_length_bounds(self):
+        """候选 2~4 字：单字不成名，5 字以上不整段吞（既有用例最长 3 字）。"""
+        self.assertEqual(self._map("我是张大炮"), {"1": "张大炮"})        # 3 字
+        self.assertEqual(self._map("我是欧阳锋锋"), {"1": "欧阳锋锋"})    # 4 字
+        # 5 字：正则最多取 4 字，第 5 字不是标点/空白 → 边界不成立 → 不建映射
+        self.assertEqual(self._map("我是王老吉凉茶"), {})
+
+    def test_must_be_followed_by_punctuation_or_end(self):
+        """「我是张三大家好」是连读，候选取不干净 → 不建映射。"""
+        self.assertEqual(self._map("我是张三大家好"), {})
+
+    def test_incremental_uses_same_rule(self):
+        """增量映射与全量 _map_speakers 走同一份候选校验（单一来源）。"""
+        for text in ("我是同意的", "我是说今天先复盘", "我是负责这一块的",
+                     "我是王", "我是张三大家好"):
+            im = IncrementalSpeakerMap()
+            u, mapping = im.update({"speaker": "1", "text": text})
+            self.assertEqual(mapping, {}, text)
+            self.assertEqual(u["speaker_name"], "说话人1", text)
+        im = IncrementalSpeakerMap()
+        _, mapping = im.update({"speaker": "1", "text": "我是老王"})
+        self.assertEqual(mapping, {"1": "老王"})
+
+
 class IncrementalSpeakerMapTest(unittest.TestCase):
     """流式增量映射：逐句 update，规则与全量 _map_speakers 一致。"""
 

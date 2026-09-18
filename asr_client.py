@@ -24,6 +24,10 @@ from urllib.parse import quote, urlparse
 import requests
 
 from config_loader import ConfigError
+# 说话人字段口径与流式主路径同源（单一实现，实测字段是 additions.speaker_id）：
+# 备用路径和主路径必须同口径，否则多人录音会全塌成「说话人0」。
+# streaming_asr 只多做一次「可选 websockets 导入」，无循环依赖。
+from streaming_asr import _speaker_of
 
 log = logging.getLogger("会议记录")
 
@@ -45,6 +49,9 @@ ERROR_HINTS = {
                 "（https://console.volcengine.com/speech/new/ ）→ 语音识别 → 开通模型 →"
                 "开通「录音文件识别2.0」，再回来点「结束并生成纪要」。",
 }
+
+# 轮询可重试上限：网络异常 / 服务端 550xxxx / HTTP 5xx 共用同一套计数与退避
+_POLL_RETRY_MAX = 5
 
 
 def _friendly_api_error(prefix, status, message):
@@ -101,7 +108,7 @@ class AsrClient:
         self.volc = cfg["volc"]
         self.tos = cfg["tos"]
         self.asr_cfg = cfg["asr"]
-        # trust_env=False：强制直连，不吃系统代理（避免系统代理残留导致连接失败，
+        # trust_env=False：强制直连，不吃系统代理（本机有代理残留踩坑史，
         # 火山这几个域名国内直连即可，走残留代理会 WinError 10061）
         self._sess = requests.Session()
         self._sess.trust_env = False
@@ -169,6 +176,8 @@ class AsrClient:
                 last_err = e
             except ConfigError:
                 raise
+            if attempt == 2:          # 最后一次失败不再白等，直接抛
+                break
             wait = 2 ** (attempt + 1)
             log.warning("[上传] 第 %d 次失败，%d 秒后重试：%s", attempt + 1, wait, last_err)
             time.sleep(wait)
@@ -179,8 +188,12 @@ class AsrClient:
         try:
             ak, sk = self.tos["access_key_id"], self.tos["secret_access_key"]
             del_url = _tos_sign_url("DELETE", url, ak, sk, self.tos["region"], expires=300)
-            self._sess.delete(del_url, timeout=60)
-            log.info("[清理] 已从 TOS 删除音频")
+            resp = self._sess.delete(del_url, timeout=60)
+            if resp.status_code in (200, 204):
+                log.info("[清理] 已从 TOS 删除音频")
+            else:
+                log.warning("[清理] 删除音频失败（HTTP %s，可到 TOS 控制台手动删）：%s",
+                            resp.status_code, (getattr(resp, "text", "") or "")[:200])
         except Exception as e:
             log.warning("[清理] 删除音频失败（可到 TOS 控制台手动删）：%s", e)
 
@@ -232,13 +245,21 @@ class AsrClient:
                     raise RuntimeError(_friendly_api_error("提交识别任务失败", status, message))
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_err = f"提交识别任务网络失败：{e}"
+            if attempt == 2:          # 最后一次失败不再白等，直接抛
+                break
             wait = 2 ** (attempt + 1)
             log.warning("[识别] 提交第 %d 次失败，%d 秒后重试", attempt + 1, wait)
             time.sleep(wait)
         raise RuntimeError(last_err or "提交识别任务失败")
 
     def _poll(self, request_id, progress=None):
-        """轮询直到完成。progress(detail) 回传等待时长文本。"""
+        """轮询直到完成。progress(detail) 回传等待时长文本。
+
+        可重试（与网络异常共用同一计数与 2^n 秒退避，上限 _POLL_RETRY_MAX 次）：
+        网络异常、X-Api-Status-Code 550xxxx（官方定义为服务端临时错误/过载，
+        _submit 侧对 55000031 已有重试先例）、HTTP 5xx。其余错误码（如 45000030
+        未开通）保持立即失败，重试没有意义。
+        """
         interval = self.asr_cfg["poll_interval_sec"]
         timeout = self.asr_cfg["poll_timeout_sec"]
         headers = self._headers(request_id, with_sequence=False)
@@ -252,12 +273,15 @@ class AsrClient:
                 resp = self._sess.post(QUERY_URL, headers=headers, json={}, timeout=30)
             except (requests.ConnectionError, requests.Timeout):
                 net_errors += 1
-                if net_errors >= 5:
+                if net_errors >= _POLL_RETRY_MAX:
                     raise RuntimeError("查询识别结果连续网络失败，请检查网络后重试。")
                 time.sleep(2 ** net_errors)
                 continue
-            net_errors = 0
             status = resp.headers.get("X-Api-Status-Code", "")
+            message = resp.headers.get("X-Api-Message", "")
+            retryable = resp.status_code >= 500 or status.startswith("550")
+            if not retryable:
+                net_errors = 0        # 拿到正常应答 → 连续失败计数清零
             if status == "20000000":
                 log.info("[识别] 完成，等待 %.0f 秒", elapsed)
                 return resp.json()
@@ -269,7 +293,16 @@ class AsrClient:
                 continue
             if status == "20000003":
                 return {"result": {"text": "", "utterances": []}}
-            message = resp.headers.get("X-Api-Message", "")
+            if retryable:
+                last = _friendly_api_error("查询识别结果失败", status, message)
+                net_errors += 1
+                if net_errors >= _POLL_RETRY_MAX:
+                    raise RuntimeError(
+                        f"查询识别结果连续失败 {net_errors} 次（服务端临时错误）：{last}")
+                log.warning("[识别] 查询第 %d 次失败，%d 秒后重试：%s",
+                            net_errors, 2 ** net_errors, last)
+                time.sleep(2 ** net_errors)
+                continue
             raise RuntimeError(_friendly_api_error("查询识别结果失败", status, message))
 
     # ---- 对外主入口 ----
@@ -304,20 +337,22 @@ class AsrClient:
 def parse_utterances(data):
     """识别应答 → [{speaker, text, start_time, end_time}, ...]（按时间顺序，空句跳过）。
 
-    speaker 取值：utterance.speaker 或 utterance.additions.speaker；都没有则归「0」。
+    speaker 口径与流式主路径同源（`streaming_asr._speaker_of`）：utterance 的
+    speaker / speaker_id / spk 或 additions.speaker / additions.speaker_id，
+    按此顺序取第一个非空值；都没有则归「0」（下游显示为 说话人0）。
     """
     result = data.get("result") or {}
     utts = result.get("utterances") or []
     out = []
     for u in utts:
-        text = (u.get("text") or "").strip()
+        text = u.get("text")
+        if not isinstance(text, str):
+            continue
+        text = text.strip()
         if not text:
             continue
-        sp = u.get("speaker")
-        if sp is None and isinstance(u.get("additions"), dict):
-            sp = u["additions"].get("speaker")
         out.append({
-            "speaker": str(sp) if sp is not None else "0",
+            "speaker": _speaker_of(u),
             "text": text,
             "start_time": u.get("start_time"),
             "end_time": u.get("end_time"),

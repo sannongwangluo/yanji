@@ -4,3 +4,5 @@ numpy>=2.0
 requests>=2.31
 python-docx>=1.1
 websockets>=15.0    # 流式识别长连接（sync client，默认不读系统代理=直连）
+pywin32>=306         # docx → PDF（本机 WPS/Word COM 转换，best-effort：没装就跳过）
+Pillow>=10.0         # 总结信息图（PIL 画彩色卡片图；字体用系统微软雅黑，读不到就跳过）
